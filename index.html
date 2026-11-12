@@ -1,0 +1,1551 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Canasta">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#14110f">
+  <title>Am grünen Tisch – Canasta</title>
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="apple-touch-icon" href="./icon-180.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:wght@500;600;700&display=swap" rel="stylesheet">
+
+  <!-- Auslagerte, frei anpassbare Dateien (liegen im selben Ordner) -->
+  <style>
+/* ============================================================================
+   CANASTA CLUB – KARTENDESIGN  (Version 2 · Sonnet)
+   Aussehen der Spielkarten. Farben/Schriften kommen aus den Themes in design.js
+   (CSS-Variablen). Hier kann man Layout, Ecken, Schatten usw. anpassen.
+   Kartengröße: --cw (Breite). Höhe ergibt sich über das Seitenverhältnis.
+   ============================================================================ */
+:root{
+  --card-face:linear-gradient(160deg,#fffdf6,#f1e8d2);
+  --card-border:#cdbd98;
+  --card-black:#1d1d24;
+  --card-red:#b3262e;
+  --card-wild:#1f7a55;
+  --card-radius:9px;
+  --card-font:'Playfair Display',Georgia,serif;
+  --card-back:repeating-linear-gradient(45deg,#7a1f2b 0 6px,#8f2a38 6px 12px);
+  --card-back-border:#f0e2b6;
+  --card-shadow:0 2px 6px rgba(0,0,0,.35);
+  --card-ratio:1.42;
+}
+
+.card{
+  --cw:78px;
+  position:relative;flex:0 0 auto;
+  width:var(--cw);height:calc(var(--cw) * var(--card-ratio));
+  background:var(--card-face);
+  border:1px solid var(--card-border);border-radius:var(--card-radius);
+  box-shadow:var(--card-shadow);
+  font-family:var(--card-font);
+  color:var(--card-black);
+  font-size:calc(var(--cw) * .27);
+  user-select:none;
+}
+.card.red{color:var(--card-red)}
+.card.wild{color:var(--card-wild)}
+.card .corner{position:absolute;display:flex;flex-direction:column;align-items:center;line-height:1;font-weight:700}
+.card .corner.tl{top:6%;left:8%}
+.card .corner.br{bottom:6%;right:8%;transform:rotate(180deg)}
+.card .corner small{font-size:.8em}
+.card .pip{position:absolute;inset:0;display:grid;place-items:center;font-size:2.1em;opacity:.9}
+.card .jk{font-size:.42em;letter-spacing:.06em;font-weight:700}
+
+.card.back{
+  background:var(--card-back);
+  border:2px solid var(--card-back-border);
+}
+.card.back::after{
+  content:"";position:absolute;inset:14%;border:1px solid var(--card-back-border);border-radius:calc(var(--card-radius) - 3px);opacity:.55;
+}
+
+.card.small{--cw:44px}
+.card.tiny{--cw:28px;border-radius:5px}
+.card.tiny .corner small,.card.tiny .pip{display:none}
+.card.tiny .corner{top:4%;left:6%;font-size:.9em}
+.card.small .pip{font-size:1.6em}
+
+.card.selected{transform:translateY(-14px);outline:2px solid #d6b36e;box-shadow:0 8px 14px rgba(0,0,0,.45)}
+.card.hl{outline:2px dashed #d6b36e}
+
+</style>
+  <script>
+/* ============================================================================
+   CANASTA CLUB – SPIELREGELN  (Version 2 · Sonnet)
+   ----------------------------------------------------------------------------
+   Diese Datei kann frei angepasst werden. Nach dem Speichern genügt ein
+   Neuladen der Seite (F5) – die Hauptdatei übernimmt alle Werte automatisch,
+   auch die Texte im Regeldialog.
+   Fehlt ein Eintrag, wird der Standardwert der Hauptdatei verwendet.
+   ============================================================================ */
+window.CANASTA_RULES = {
+
+  /* ---- Punkte der einzelnen Karten (Augenwert beim Auslegen / Restkarten) ---- */
+  cardValues: {
+    JOKER: 50,
+    "2": 20,
+    A: 20,
+    K: 10, Q: 10, J: 10, "10": 10, "9": 10, "8": 10,
+    "7": 5, "6": 5, "5": 5, "4": 5,
+    blackThree: 5,     // ♠3 und ♣3 (nur als Restkarte relevant)
+    redThree: 100      // ♥3 und ♦3
+  },
+
+  /* ---- Rote Dreien ---- */
+  redThrees: {
+    bonusAllFour: 400,          // Zusatzpunkte, wenn ein Team alle 4 rote Dreien hat
+    negativeIfNoMeld: true      // Ohne eigene Auslage zählen rote Dreien negativ (werden abgezogen statt gutgeschrieben)
+  },
+
+  /* ---- Canasta-Boni (Satz mit mindestens `canastaSize` Karten) ---- */
+  canasta: {
+    size: 7,
+    pureBonus: 500,             // Reine Canasta (ohne Wild Cards)
+    mixedBonus: 300,            // Gemischte Canasta
+    wildBonus: 1000,            // Joker-Canasta (nur Wild Cards)
+    wildCanastaAllowed: true,
+    wildCanastaSize: 7,         // So viele Wild Cards braucht eine Joker-Canasta
+    noWildsInCanasta: true      // In eine fertige Canasta dürfen keine Wild Cards mehr gelegt werden
+  },
+
+  /* ---- Ausmachen ---- */
+  goOut: {
+    bonus: 100,
+    concealedBonus: 200,        // "verdeckt": Team hatte vorher noch nichts ausgelegt
+    canastasRequired: { "2": 2, "3": 1, "4": 1 },   // Anzahl Canastas je nach Spielerzahl
+    minHandAfterMeld: 2,        // Nach dem Auslegen müssen so viele Karten bleiben (außer Canasta-Pflicht ist erfüllt)
+    deadHandEnabled: true,      // "Tot gespielt": zu wenig Karten und keine Canasta -> nur ziehen & abwerfen
+    deadHandMaxCards: 1         // Ab so wenigen Karten auf der Hand gilt man als tot
+  },
+
+  /* ---- Sätze ---- */
+  melds: {
+    minCards: 3,
+    minNaturals: 2,
+    maxWilds: 3
+  },
+
+  /* ---- Eröffnungswert (Mindestpunkte der ersten Auslage eines Teams) ----
+     Es gilt der letzte Eintrag, dessen "from" kleiner/gleich dem Punktestand des Teams ist. */
+  opening: [
+    { from: -999999, min: 15 },
+    { from: 0,       min: 50 },
+    { from: 1500,    min: 90 },
+    { from: 3000,    min: 120 }
+  ],
+
+  /* ---- Ablauf ---- */
+  game: {
+    playerOptions: [2, 3, 4],
+    defaultPlayers: 4,
+    handSizeOptions: [11, 12, 13, 14, 15],
+    defaultHandSize: 11,
+    targetOptions: [3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000],
+    defaultTarget: 5000,
+    drawFromStock: { "2": 2, "3": 1, "4": 1 },     // Karten pro Zug vom Nachziehstapel
+    openingRound: true,                            // Erste Runde: nur ziehen & abwerfen
+    freezeOnStartCard: true,                       // Wild Card / rote 3 als Startkarte friert den Stapel ein
+    nextRoundSeconds: 30,
+    allowWildDiscard: true,                        // Wild Cards (2, Joker) dürfen abgeworfen werden
+    wildDiscardFreezes: true                       // …und sperren dann den Ablagestapel (Aufnahme nur mit Paar aus der Hand)
+  },
+
+  /* ---- Anzeige ---- */
+  ui: {
+    hidePileHistory: true     // Ablagestapel: nur oberste Karte sichtbar, keine Kartenanzahl, keine Kartennamen im Verlauf
+  },
+
+  /* ---- Ablagestapel aufnehmen ---- */
+  pickup: {
+    needsNaturalTopCard: true,      // Oberste Karte darf keine 3 / Wild Card sein
+    naturalPairFromHandWhenFrozen: 2,
+    allowWhenOwnCanastaOfTopRank: false, // true = Stapel darf aufgenommen werden, obwohl das Team schon eine Canasta dieses Rangs hat
+    allowOneNaturalPlusWildWhenOpen: true
+  }
+};
+
+</script>
+  <script>
+/* ============================================================================
+   CANASTA CLUB – COMPUTERGEGNER  (Version 2 · Sonnet)
+   Persönlichkeiten und Schwierigkeitsgrade. Alle Werte 0 … 1 (außer thinkMs).
+   Neuladen (F5) übernimmt Änderungen. Gegner werden in der Reihenfolge
+   der Liste "personas" an den Tisch gesetzt.
+   ============================================================================ */
+window.CANASTA_AI = {
+  thinkMs: 700,                 // Bedenkzeit pro Aktion in Millisekunden
+
+  /* Sitzordnung: Der Mensch sitzt auf Platz 0. Bei 4 Spielern bilden Platz 0 + 2 ein Team. */
+  personas: [
+    {
+      name: "Mara", style: "Die Taktikerin",
+      about: "Rechnet nüchtern. Nimmt den Haufen nur, wenn er sich lohnt, und wirft gern sichere Karten ab.",
+      traits: {
+        pileHunger: 0.45,   // Wie gierig auf den Ablagestapel (0 = nimmt fast nie, 1 = nimmt fast immer)
+        patience: 0.65,     // Wartet mit Auslegen / Eröffnung auf bessere Gelegenheiten
+        bluff: 0.35,        // Neigung zu Fallen (z. B. aus drei Karten eine abwerfen, um den Gegner zu täuschen)
+        caution: 0.80,      // Vorsicht beim Abwerfen (vermeidet Karten, die der Gegner brauchen kann)
+        greedForCanasta: 0.6
+      }
+    },
+    {
+      name: "Jonas", style: "Der Zocker",
+      about: "Liebt Risiko, Fallen und große Haufen. Gelegentlich wirft er absichtlich eine Karte ab, die er eigentlich braucht.",
+      traits: { pileHunger: 0.8, patience: 0.35, bluff: 0.75, caution: 0.4, greedForCanasta: 0.8 }
+    },
+    {
+      name: "Lina", style: "Die Geduldige",
+      about: "Hält Karten verdeckt, sammelt Paare und schlägt spät zu. Lässt kleine Haufen links liegen.",
+      traits: { pileHunger: 0.3, patience: 0.9, bluff: 0.55, caution: 0.7, greedForCanasta: 0.5 }
+    }
+  ],
+
+  /* Schwierigkeitsgrade: Multiplikatoren auf die Persönlichkeit. */
+  difficulties: {
+    anfaenger: { label: "Anfänger", bluffMul: 0.0, cautionMul: 0.4, memory: false, mistakeChance: 0.18, hungerAdd: 0.15 },
+    normal:    { label: "Normal",   bluffMul: 0.8, cautionMul: 0.9, memory: true,  mistakeChance: 0.04, hungerAdd: 0 },
+    meister:   { label: "Meister",  bluffMul: 1.2, cautionMul: 1.2, memory: true,  mistakeChance: 0,    hungerAdd: 0 }
+  },
+  defaultDifficulty: "normal"
+};
+
+</script>
+  <script>
+/* ============================================================================
+   CANASTA CLUB – DESIGN  (Version 2 · Sonnet)
+   Themes für Karten und Tisch. "activeTheme" wählt das Standarddesign; im Spiel
+   kann man es im Setup-Dialog umstellen. Eigene Themes: einfach kopieren & ändern.
+   Die Variablen landen als CSS-Variablen im Spiel (siehe card-design.css).
+   ============================================================================ */
+window.CANASTA_DESIGN = {
+  activeTheme: "klassisch",
+
+  suitSymbols: { "♠": "♠", "♥": "♥", "♦": "♦", "♣": "♣", "★": "★" },
+  jokerLabel: "JOKER",
+
+  themes: {
+    klassisch: {
+      label: "Klassisch Elfenbein",
+      vars: {
+        "--card-face": "linear-gradient(160deg,#fffdf6,#f1e8d2)",
+        "--card-border": "#cdbd98",
+        "--card-black": "#1d1d24",
+        "--card-red": "#b3262e",
+        "--card-wild": "#1f7a55",
+        "--card-radius": "9px",
+        "--card-font": "'Playfair Display',Georgia,serif",
+        "--card-back": "repeating-linear-gradient(45deg,#7a1f2b 0 6px,#8f2a38 6px 12px)",
+        "--card-back-border": "#f0e2b6",
+        "--table-felt": "radial-gradient(ellipse at 50% 40%,#2e6354,#245246 55%,#183a31)",
+        "--table-rim": "#6b4a2b"
+      }
+    },
+    modern: {
+      label: "Modern Minimal",
+      vars: {
+        "--card-face": "linear-gradient(160deg,#ffffff,#f3f4f7)",
+        "--card-border": "#c6cad3",
+        "--card-black": "#12141a",
+        "--card-red": "#d6233a",
+        "--card-wild": "#0a7f8c",
+        "--card-radius": "6px",
+        "--card-font": "'DM Sans',system-ui,sans-serif",
+        "--card-back": "repeating-linear-gradient(0deg,#1f3a5f 0 5px,#274872 5px 10px)",
+        "--card-back-border": "#e6edf7",
+        "--table-felt": "radial-gradient(ellipse at 50% 40%,#2d4a63,#223a4f 55%,#162838)",
+        "--table-rim": "#3a3f4a"
+      }
+    },
+    nacht: {
+      label: "Nacht & Gold",
+      vars: {
+        "--card-face": "linear-gradient(160deg,#2a2630,#1b1820)",
+        "--card-border": "#d6b36e",
+        "--card-black": "#f0e6cf",
+        "--card-red": "#ff7a7a",
+        "--card-wild": "#7be0b0",
+        "--card-radius": "10px",
+        "--card-font": "'Playfair Display',Georgia,serif",
+        "--card-back": "repeating-linear-gradient(135deg,#14110f 0 6px,#2a2118 6px 12px)",
+        "--card-back-border": "#d6b36e",
+        "--table-felt": "radial-gradient(ellipse at 50% 40%,#3a2f4f,#2a2240 55%,#1a1428)",
+        "--table-rim": "#8a6a2b"
+      }
+    }
+  }
+};
+
+</script>
+  <script>
+/* ============================================================================
+   CANASTA CLUB – MUSIK  (Version 2 · Sonnet)
+   Tracks hinzufügen/entfernen, Lautstärke und Tempo anpassen. Neuladen (F5) genügt.
+   "url" kann eine Internetadresse oder ein relativer Pfad sein, z. B. "musik/jazz.mp3"
+   (Dateien neben der HTML-Datei). Musik startet nie automatisch – nur per Klick.
+   ============================================================================ */
+window.CANASTA_MUSIC = {
+  shuffle: true,            // Zufällige Reihenfolge
+  loopPlaylist: true,       // Playlist endlos wiederholen
+  allowLocalFiles: true,    // Button "Musikdateien" (eigene Dateien vom Gerät, max. 3)
+  maxLocalFiles: 3,
+  defaultVolume: 0.05,      // 0 … 1
+  localVolume: 0.10,
+  localPlaybackRate: 0.85,
+
+  tracks: [
+    {
+      title: "Jazz at the park (CC0)",
+      url: "https://upload.wikimedia.org/wikipedia/commons/0/03/Jazz_at_the_park.ogg",
+      credit: "Manwithmetalpig · CC0 · Wikimedia Commons",
+      creditUrl: "https://commons.wikimedia.org/wiki/File:Jazz_at_the_park.ogg",
+      volume: 0.05,
+      playbackRate: 1
+    }
+    // , { title: "Mein Lieblingssong", url: "musik/lied.mp3", volume: 0.1, playbackRate: 1 }
+  ]
+};
+
+</script>
+
+  <style>
+    :root{
+      --bg:#14110f;--panel:#1d1915;--panel2:#26211b;--line:#3b3329;--text:#f3ead8;--muted:#b3a58a;
+      --gold:#d6b36e;--coral:#e0785d;--good:#6bd19a;--bad:#ff8a7a;
+      --table-felt:radial-gradient(ellipse at 50% 40%,#2e6354,#245246 55%,#183a31);--table-rim:#6b4a2b;
+    }
+    *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+    body{padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+    .card{touch-action:manipulation;-webkit-user-select:none;user-select:none}
+    html,body{margin:0;background:var(--bg);color:var(--text);font-family:'DM Sans',system-ui,sans-serif}
+    body{min-height:100vh;background:radial-gradient(circle at 20% 0%,#2a2118,#14110f 60%)}
+    button{font:inherit;cursor:pointer}
+    a{color:var(--gold)}
+    header.top{display:flex;align-items:center;gap:12px;padding:12px 20px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+    .logo{font-family:'Playfair Display',serif;font-size:1.5rem;color:var(--gold);margin-right:auto}
+    .logo small{font-family:'DM Sans',sans-serif;font-size:.7rem;color:var(--muted);margin-left:8px;letter-spacing:.08em;text-transform:uppercase}
+    .btn{background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:8px 14px;transition:.15s}
+    .btn:hover:not(:disabled){border-color:var(--gold)}
+    .btn:disabled{opacity:.4;cursor:not-allowed}
+    .btn.primary{background:linear-gradient(180deg,#e3c383,#c79d4f);color:#2a1d08;border-color:#c79d4f;font-weight:700}
+    .btn.danger{border-color:var(--coral)}
+    .btn.on{border-color:var(--good);color:var(--good)}
+    h1.title{font-family:'Playfair Display',serif;font-weight:600;font-size:1.3rem;margin:16px 20px 2px}
+    .meta{margin:0 20px 10px;color:var(--muted);font-size:.9rem}
+    .layout{display:grid;grid-template-columns:minmax(0,1fr) 350px;gap:16px;padding:0 20px 20px}
+    @media(max-width:920px){.layout{grid-template-columns:1fr}}
+
+    .tablewrap{position:relative}
+    .banner{min-height:34px;margin-bottom:8px;padding:7px 14px;border-radius:10px;background:var(--panel);border:1px solid var(--line);font-size:.95rem}
+    .banner.alert{border-color:var(--gold);color:var(--gold)}
+    .table{background:var(--table-felt);border:8px solid var(--table-rim);border-radius:34px;padding:14px;display:flex;flex-direction:column;gap:12px;box-shadow:inset 0 0 70px rgba(0,0,0,.45),0 10px 30px rgba(0,0,0,.5)}
+    .opps{display:flex;gap:10px;justify-content:space-around;flex-wrap:wrap}
+    .opp{background:rgba(0,0,0,.25);border:1px solid rgba(255,255,255,.1);border-radius:14px;padding:8px 12px;min-width:150px;text-align:center}
+    .opp.active{border-color:var(--gold);box-shadow:0 0 14px rgba(214,179,110,.4)}
+    .opp .nm{font-family:'Playfair Display',serif;font-size:1.05rem}
+    .opp .sub{font-size:.75rem;color:#cfd9d3}
+    .opp .fan{display:flex;justify-content:center;margin-top:6px;min-height:40px}
+    .opp .fan .card{--cw:26px;margin-left:-14px}
+    .opp .fan .card:first-child{margin-left:0}
+    .think{color:var(--gold);font-size:.78rem;min-height:1em}
+    .zone{background:rgba(0,0,0,.2);border-radius:14px;padding:8px 10px}
+    .zone h4{margin:0 0 6px;font-size:.8rem;font-weight:600;color:#d8e4dd;letter-spacing:.04em}
+    .melds{display:flex;gap:10px;flex-wrap:wrap;min-height:44px}
+    .meld{padding:4px 6px 6px;border:1px solid rgba(255,255,255,.18);border-radius:10px;background:rgba(0,0,0,.22);cursor:default}
+    .meld.own{cursor:pointer}
+    .meld.target{outline:2px solid var(--gold)}
+    .meld.pure{border-color:#e9c46a;box-shadow:0 0 8px rgba(233,196,106,.5)}
+    .meld.mixed{border-color:#b9c2cc}
+    .meld.wild{border-color:#7be0b0}
+    .mlabel{font-size:.72rem;color:#e6efe9;margin-bottom:3px}
+    .mcards{display:flex}
+    .mcards .card{margin-left:-17px}
+    .mcards .card:first-child{margin-left:0}
+    .reds{display:flex;gap:4px;align-items:center;font-size:.75rem;color:#e6efe9}
+    .center{display:flex;justify-content:center;gap:34px;align-items:flex-end;padding:6px 0}
+    .pile{text-align:center;font-size:.8rem;color:#e6efe9}
+    .pile .slot{display:flex;justify-content:center;position:relative;min-height:112px;align-items:flex-end}
+    .pile .slot .card{--cw:70px}
+    .pile .slot .card+.card{margin-left:-48px}
+    .pile .frozen{color:#9fd8ff;font-weight:700}
+    .emptyslot{width:70px;height:99px;border:2px dashed rgba(255,255,255,.3);border-radius:9px}
+    .stackwrap{border-radius:9px}
+    .stackwrap.s2{box-shadow:3px 3px 0 -1px #e8dcc0,5px 5px 0 -1px #bfae86}
+    .stackwrap.s3{box-shadow:3px 3px 0 -1px #e8dcc0,6px 6px 0 -1px #bfae86,9px 9px 0 -1px #e8dcc0,12px 12px 0 -1px #bfae86}
+    .me{display:flex;flex-direction:column;gap:8px}
+    .mehead{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+    .mehead .nm{font-family:'Playfair Display',serif;font-size:1.1rem}
+    .mehead.active .nm{color:var(--gold)}
+    .hand{display:flex;overflow-x:auto;padding:18px 8px 8px;min-height:140px}
+    .hand .card{cursor:pointer;transition:transform .12s}
+    .hand .card:focus-visible{outline:2px solid #fff}
+    .hand .card.new{box-shadow:0 0 0 2px #7fd1ff,var(--card-shadow)}
+    .hand .card.selected{transform:translateY(-14px)}
+
+    aside .panel{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:14px;margin-bottom:14px}
+    aside h3{margin:0 0 10px;font-family:'Playfair Display',serif;font-weight:600;font-size:1.05rem;color:var(--gold)}
+    .team{margin-bottom:12px}
+    .team .row{display:flex;justify-content:space-between;font-size:.9rem}
+    .bar{height:8px;border-radius:6px;background:#0d0b09;overflow:hidden;margin:4px 0}
+    .bar i{display:block;height:100%;background:linear-gradient(90deg,#c79d4f,#e8cf90)}
+    .detail{font-size:.78rem;color:var(--muted);line-height:1.5}
+    .actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+    .actions .btn{padding:10px 6px}
+    #hint{margin:10px 0 4px;font-size:.9rem;min-height:2.6em}
+    #status{font-size:.78rem;color:var(--muted);min-height:1.2em}
+    select{width:100%;margin-top:8px;padding:8px;border-radius:8px;background:var(--panel2);color:var(--text);border:1px solid var(--line)}
+    .log{font-size:.8rem;color:var(--muted);max-height:190px;overflow:auto;line-height:1.45}
+    .log div:first-child{color:var(--text)}
+    footer.foot{padding:6px 20px 24px;color:var(--muted);font-size:.8rem;display:flex;gap:18px;flex-wrap:wrap}
+
+    .modal{position:fixed;inset:0;background:rgba(0,0,0,.72);display:none;place-items:center;z-index:50;padding:14px}
+    .modal.show{display:grid}
+    .modal .box{background:var(--panel);border:1px solid var(--gold);border-radius:20px;padding:22px;max-width:640px;width:100%;max-height:92vh;overflow:auto}
+    .modal h2{font-family:'Playfair Display',serif;margin:0 0 12px;color:var(--gold)}
+    .field{display:grid;gap:4px;margin-bottom:12px}
+    .field label{font-size:.85rem;color:var(--muted)}
+    .field input,.field select{margin:0;padding:9px;border-radius:8px;background:var(--panel2);color:var(--text);border:1px solid var(--line);width:100%}
+    .field.check{display:flex;gap:8px;align-items:center}
+    .field.check input{width:auto}
+    .two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    .note{font-size:.82rem;color:var(--muted);line-height:1.5}
+    table.res{width:100%;border-collapse:collapse;font-size:.88rem;margin:8px 0}
+    table.res th,table.res td{padding:5px 6px;border-bottom:1px solid var(--line);text-align:right}
+    table.res th:first-child,table.res td:first-child{text-align:left}
+    table.res tr.sum td{font-weight:700;color:var(--gold)}
+    .rules ul{padding-left:18px;line-height:1.55;font-size:.9rem}
+    .rules h3{color:var(--gold);margin:14px 0 4px;font-size:1rem}
+    .persona{font-size:.78rem;color:var(--muted)}
+
+    /* Ganzseiten-Ansicht (Desktop): alles passt in das Fenster, nur Seitenleiste/Spielverlauf scrollt intern */
+    header.top{padding:8px 20px}
+    .meta{margin:0;font-size:.82rem}
+    .oppgroups{display:flex;gap:10px;flex-wrap:wrap;align-items:stretch}
+    .oppgroup{flex:1 1 260px;display:flex;flex-direction:column;gap:6px;min-width:0}
+    .opprow{display:flex;gap:8px;justify-content:center}
+    .opprow .opp{flex:1}
+    .oppgroup .zone{flex:1}
+    .tracker{display:flex;align-items:center;gap:5px}
+    .tracker .card{--cw:42px}
+    @media(min-width:921px){
+      .oppgroup .zone,.table>.zone{padding:5px 8px}
+      .zone h4{margin:0 0 3px;font-size:.74rem}
+      .opp{padding:4px 10px;display:flex;flex-wrap:wrap;gap:2px 10px;align-items:center;justify-content:center}
+      .opp .fan{margin-top:0}
+      .meld{padding:2px 4px 3px}
+      .mcards .card{--cw:34px}
+      .table>.center{flex:1;align-items:center;gap:40px}
+      .me{margin-top:auto}
+      .mehead{justify-content:flex-start;gap:20px}
+      .mehead .nm{margin-right:auto}
+      .layout{align-items:stretch}
+      aside{display:flex;flex-direction:column;min-height:0;overflow:hidden}
+      aside .panel{flex:none;padding:10px;margin-bottom:10px}
+      aside .panel:last-child{flex:1;min-height:110px;display:flex;flex-direction:column;margin-bottom:0;overflow:hidden}
+      aside .panel:last-child .log{flex:1;max-height:none;min-height:0}
+      aside .detail{font-size:.7rem;line-height:1.3}
+      aside .team{margin-bottom:6px}
+      aside .bar{margin:2px 0}
+      aside h3{margin-bottom:6px}
+      #hint{margin:6px 0 2px;min-height:0;font-size:.82rem}
+      html,body{height:100%;overflow:hidden}
+      body{display:flex;flex-direction:column;min-height:0}
+      .layout{flex:1;min-height:0;padding:10px 20px 8px}
+      .tablewrap{display:flex;flex-direction:column;min-height:0}
+      .banner{min-height:0;margin-bottom:6px;padding:5px 12px;flex:none}
+      .table{flex:1;min-height:0;overflow:auto;padding:10px;gap:8px;border-width:6px}
+      .hand{min-height:0;padding:14px 8px 6px}
+      .hand .card{--cw:clamp(46px,8.6vh,86px)}
+      .pile .slot{min-height:0}
+      .pile .slot .card,.emptyslot{--cw:clamp(44px,8vh,76px)}
+      .emptyslot{width:clamp(44px,8vh,76px);height:calc(clamp(44px,8vh,76px)*1.42)}
+      .melds{min-height:0}
+      footer.foot{display:none}
+    }
+    @media(max-width:700px){.opprow{gap:6px}.opp{min-width:110px;padding:6px}.center{gap:16px}.table{padding:8px;border-width:5px}}
+    @media(max-width:420px){.actions{grid-template-columns:1fr}.two{grid-template-columns:1fr}}
+    @media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+  </style>
+</head>
+<body>
+<header class="top">
+  <div class="logo">Am grünen Tisch <small id="meta"></small></div>
+  <button class="btn" id="btnFiles" title="Eigene Musikdateien wählen">♪ Musikdateien</button>
+  <button class="btn" id="btnMusic" aria-pressed="false">Musik an</button>
+  <button class="btn" id="btnRules">Regeln</button>
+  <button class="btn" id="btnNew">Neue Partie</button>
+  <input type="file" id="fileInput" accept="audio/*" multiple hidden>
+</header>
+
+<div class="layout">
+  <section class="tablewrap">
+    <div class="banner" id="banner" aria-live="polite">Willkommen im Canasta Club.</div>
+    <div class="table" id="table"></div>
+  </section>
+  <aside>
+    <div class="panel"><h3>Punktestand</h3><div id="scores"></div></div>
+    <div class="panel">
+      <h3>Dein Zug</h3>
+      <div class="actions">
+        <button class="btn primary" id="aDraw">Karten ziehen</button>
+        <button class="btn" id="aPickup">Haufen aufnehmen</button>
+        <button class="btn" id="aLay">Auslegen</button>
+        <button class="btn" id="aDiscard">Abwerfen</button>
+      </div>
+      <select id="wildTarget" hidden aria-label="Wild Card diesem Satz zuordnen"></select>
+      <div id="hint"></div>
+      <div id="status" role="status" aria-live="polite"></div>
+    </div>
+    <div class="panel"><h3>Spielverlauf</h3><div class="log" id="log"></div></div>
+  </aside>
+</div>
+
+<footer class="foot">
+  <span>Regelreferenz: <a href="https://www.pagat.com/rummy/canasta.html" target="_blank" rel="noreferrer">Pagat · Canasta</a></span>
+  <span>Anpassbar über: rules.js · ai-personas.js · design.js · card-design.css · music.js</span>
+  <span id="musicCredit"></span>
+</footer>
+
+<!-- Setup -->
+<div class="modal" id="mSetup" role="dialog" aria-modal="true" aria-labelledby="setupTitle">
+  <div class="box">
+    <h2 id="setupTitle">Dein Platz ist bereit.</h2>
+    <div class="field"><label for="sName">Anzeigename</label><input id="sName" maxlength="18" value="Du"></div>
+    <div class="two">
+      <div class="field"><label for="sPlayers">Spieler am Tisch</label><select id="sPlayers"></select></div>
+      <div class="field"><label for="sHand">Karten pro Spieler</label><select id="sHand"></select></div>
+      <div class="field"><label for="sTarget">Siegpunktzahl</label><select id="sTarget"></select></div>
+      <div class="field"><label for="sDiff">Stärke der Computergegner</label><select id="sDiff"></select></div>
+      <div class="field"><label for="sTheme">Kartendesign</label><select id="sTheme"></select></div>
+      <div class="field check"><input type="checkbox" id="sTricks" checked><label for="sTricks">Fallen &amp; Täuschungen der Gegner</label></div>
+    </div>
+    <div class="field check"><input type="checkbox" id="sSpectate"><label for="sSpectate">Zuschauermodus (alle Plätze spielt der Computer)</label></div>
+    <p class="note" id="dealHint"></p>
+    <div id="personaList" class="persona"></div>
+    <p><button class="btn primary" id="btnStart">Partie beginnen →</button></p>
+  </div>
+</div>
+
+<!-- Regeln -->
+<div class="modal" id="mRules" role="dialog" aria-modal="true" aria-labelledby="rulesTitle">
+  <div class="box rules">
+    <h2 id="rulesTitle">Spielregeln</h2>
+    <div id="rulesBody"></div>
+    <p><button class="btn" id="btnRulesClose">Schließen</button></p>
+  </div>
+</div>
+
+<!-- Rundenabrechnung -->
+<div class="modal" id="mRound" role="dialog" aria-modal="true" aria-labelledby="roundTitle">
+  <div class="box">
+    <h2 id="roundTitle">Abrechnung</h2>
+    <div id="roundBody"></div>
+    <p><button class="btn primary" id="btnNext">Weiter</button> <span class="note" id="countdown"></span></p>
+  </div>
+</div>
+
+<script>
+'use strict';
+/* =====================================================================
+   1. KONFIGURATION (aus den externen Dateien, mit Rückfall-Standardwerten)
+   ===================================================================== */
+function deepMerge(base, over){
+  if(Array.isArray(base) || typeof base !== 'object' || base === null) return over === undefined ? base : over;
+  const out = {...base};
+  if(over && typeof over === 'object' && !Array.isArray(over)){
+    for(const k of Object.keys(over)) out[k] = (k in base) ? deepMerge(base[k], over[k]) : over[k];
+  }
+  return out;
+}
+const DEFAULT_RULES = {
+  cardValues:{JOKER:50,'2':20,A:20,K:10,Q:10,J:10,'10':10,'9':10,'8':10,'7':5,'6':5,'5':5,'4':5,blackThree:5,redThree:100},
+  redThrees:{bonusAllFour:400,negativeIfNoMeld:true},
+  canasta:{size:7,pureBonus:500,mixedBonus:300,wildBonus:1000,wildCanastaAllowed:true,wildCanastaSize:7,noWildsInCanasta:true},
+  goOut:{bonus:100,concealedBonus:200,canastasRequired:{'2':2,'3':1,'4':1},minHandAfterMeld:2,deadHandEnabled:true,deadHandMaxCards:1},
+  melds:{minCards:3,minNaturals:2,maxWilds:3},
+  opening:[{from:-999999,min:15},{from:0,min:50},{from:1500,min:90},{from:3000,min:120}],
+  game:{playerOptions:[2,3,4],defaultPlayers:4,handSizeOptions:[11,12,13,14,15],defaultHandSize:11,
+        targetOptions:[3000,4000,5000,6000,7000,8000,9000,10000],defaultTarget:5000,
+        drawFromStock:{'2':2,'3':1,'4':1},openingRound:true,freezeOnStartCard:true,nextRoundSeconds:30,allowWildDiscard:true,wildDiscardFreezes:true},
+  ui:{hidePileHistory:true},
+  pickup:{needsNaturalTopCard:true,naturalPairFromHandWhenFrozen:2,allowWhenOwnCanastaOfTopRank:false,allowOneNaturalPlusWildWhenOpen:true}
+};
+const RULES_LOADED = !!window.CANASTA_RULES;
+const R = deepMerge(DEFAULT_RULES, window.CANASTA_RULES || {});
+R.opening = R.opening.slice().sort((a,b)=>a.from-b.from);
+
+const FALLBACK_AI = {thinkMs:700,personas:[
+  {name:'Mara',style:'Die Taktikerin',traits:{pileHunger:.45,patience:.65,bluff:.35,caution:.8,greedForCanasta:.6}},
+  {name:'Jonas',style:'Der Zocker',traits:{pileHunger:.8,patience:.35,bluff:.75,caution:.4,greedForCanasta:.8}},
+  {name:'Lina',style:'Die Geduldige',traits:{pileHunger:.3,patience:.9,bluff:.55,caution:.7,greedForCanasta:.5}}],
+  difficulties:{normal:{label:'Normal',bluffMul:.8,cautionMul:.9,memory:true,mistakeChance:.04,hungerAdd:0}},defaultDifficulty:'normal'};
+const AI = window.CANASTA_AI && window.CANASTA_AI.personas && window.CANASTA_AI.personas.length ? window.CANASTA_AI : FALLBACK_AI;
+if(!AI.difficulties || !Object.keys(AI.difficulties).length) AI.difficulties = FALLBACK_AI.difficulties;
+const DESIGN = window.CANASTA_DESIGN && window.CANASTA_DESIGN.themes ? window.CANASTA_DESIGN : {activeTheme:'x',themes:{x:{label:'Standard',vars:{}}},jokerLabel:'JOKER'};
+const MUSIC = window.CANASTA_MUSIC || {tracks:[],allowLocalFiles:true,maxLocalFiles:3};
+
+/* =====================================================================
+   2. KARTEN
+   ===================================================================== */
+const $ = s => document.querySelector(s);
+const fmt = n => Number(n).toLocaleString('de-DE');
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const RANK_ORDER = {'3':3,'4':4,'5':5,'6':6,'7':7,'8':8,'9':9,'10':10,J:11,Q:12,K:13,A:14,'2':15,JOKER:16};
+const RANK_LIST = ['2','3','4','5','6','7','8','9','10','J','Q','K','A'];
+const isWild = c => c.rank === '2' || c.rank === 'JOKER';
+const isRed3 = c => c.rank === '3' && (c.suit === '♥' || c.suit === '♦');
+const isBlack3 = c => c.rank === '3' && !isRed3(c);
+const isNat = c => !isWild(c) && c.rank !== '3';
+const cardVal = c => c.rank === 'JOKER' ? R.cardValues.JOKER : c.rank === '3' ? (isRed3(c) ? R.cardValues.redThree : R.cardValues.blackThree) : R.cardValues[c.rank];
+const sumVal = cards => cards.reduce((s,c)=>s+cardVal(c),0);
+const rnd = Math.random;
+
+function makeDeck(){
+  const d = []; let id = 0;
+  for(let k=0;k<2;k++) for(const s of ['♠','♥','♦','♣']) for(const r of RANK_LIST) d.push({id:id++,rank:r,suit:s});
+  for(let k=0;k<4;k++) d.push({id:id++,rank:'JOKER',suit:'★'});
+  for(let i=d.length-1;i>0;i--){ const j = Math.floor(rnd()*(i+1)); [d[i],d[j]] = [d[j],d[i]]; }
+  return d;
+}
+function sortHand(h){
+  const key = c => isWild(c) ? 100 + RANK_ORDER[c.rank] : RANK_ORDER[c.rank];
+  h.sort((a,b)=>key(a)-key(b) || a.suit.localeCompare(b.suit) || a.id-b.id);
+}
+function sortMeld(m){ m.cards.sort((a,b)=>(isWild(a)-isWild(b)) || a.id-b.id); }
+function cardHTML(c, cls='', extra=''){
+  const red = c.suit === '♥' || c.suit === '♦';
+  const sym = (DESIGN.suitSymbols && DESIGN.suitSymbols[c.suit]) || c.suit;
+  const label = c.rank === 'JOKER' ? '★' : c.rank;
+  const corner = c.rank === 'JOKER'
+    ? `<span class="corner tl"><span>★</span></span><span class="corner br"><span>★</span></span><span class="pip jk">${esc(DESIGN.jokerLabel||'JOKER')}</span>`
+    : `<span class="corner tl"><span>${label}</span><small>${sym}</small></span><span class="corner br"><span>${label}</span><small>${sym}</small></span><span class="pip">${sym}</span>`;
+  return `<div class="card ${red?'red':''} ${isWild(c)?'wild':''} ${cls}" data-id="${c.id}" ${extra}>${corner}</div>`;
+}
+const backHTML = (cls='') => `<div class="card back ${cls}"></div>`;
+const cardName = c => c.rank === 'JOKER' ? 'Joker' : c.rank + c.suit;
+
+/* =====================================================================
+   3. SPIELZUSTAND
+   ===================================================================== */
+let S = null;          // aktuelles Spiel
+let gameSeq = 0;
+
+function persona(i){
+  const list = AI.personas; let idx = i;       // i = Gegner-Index 0..n-2
+  const n = S.n;
+  if(n === 4){ idx = [0,2,1][i]; }                 // Platz 2 (Partner) = Lina
+  const p = list[idx % list.length];
+  return {...p, name: list.length > idx ? p.name : p.name + (Math.floor(idx/list.length)+1)};
+}
+function newGame(cfg){
+  gameSeq++;
+  const n = cfg.players, T = n === 4 ? 2 : n;
+  S = {id:gameSeq, cfg, n, T, round:0, lead:-1, scores:Array(T).fill(0), players:[], log:[], timers:[],
+       stock:[], discard:[], melds:[], reds:[], frozen:false, phase:'setup', turn:0, selected:new Set(), target:null,
+       drawn:[], openingLeft:0, known:{}, bait:null, ended:false, aiStage:0, startNoMeld:false, lastStatus:''};
+  const diff = AI.difficulties[cfg.difficulty] || Object.values(AI.difficulties)[0];
+  S.diff = diff;
+  for(let i=0;i<n;i++){
+    const spectator = cfg.spectate && i === 0;
+    const pr = i === 0 ? (spectator ? persona(0) : null) : persona(i-1);
+    S.players.push({id:i, name: i===0 ? cfg.name : pr.name, isHuman: i===0 && !spectator,
+                    persona: pr || null, hand:[], team: n===4 ? i%2 : i, hold:null});
+  }
+  startRound();
+}
+const teamOf = id => S.players[id].team;
+const teamMembers = t => S.players.filter(p=>p.team===t);
+function teamName(t){
+  const m = teamMembers(t);
+  if(m.length === 1) return m[0].isHuman ? m[0].name : m[0].name;
+  return m.map(p=>p.name).join(' + ');
+}
+const me = () => S.players[0];
+const cur = () => S.players[S.turn];
+const isOpening = () => S.openingLeft > 0;
+const needCanastas = () => R.goOut.canastasRequired[S.n] || 1;
+const isDead = p => !!R.goOut.deadHandEnabled && p.hand.length <= R.goOut.deadHandMaxCards && canastaCount(p.team) < needCanastas();
+const drawCount = () => isOpening() ? 1 : (R.game.drawFromStock[S.n] || 1);
+const findMeld = (t, rank) => S.melds[t].find(m=>m.rank===rank) || null;
+const isCanasta = m => m.rank === 'WILD' ? m.cards.length >= R.canasta.wildCanastaSize : m.cards.length >= R.canasta.size;
+const canastaCount = t => S.melds[t].filter(isCanasta).length;
+function canastaType(m){ return m.rank === 'WILD' ? 'wild' : (m.cards.some(isWild) ? 'mixed' : 'pure'); }
+const canastaBonus = m => ({pure:R.canasta.pureBonus,mixed:R.canasta.mixedBonus,wild:R.canasta.wildBonus})[canastaType(m)];
+function openingMin(t){ let min = R.opening[0].min; for(const e of R.opening) if(S.scores[t] >= e.from) min = e.min; return min; }
+const later = (fn, ms) => { const id = S.id; const h = setTimeout(()=>{ if(S && S.id === id) fn(); }, ms); S.timers.push(h); };
+function log(msg){ S.log.unshift(msg); if(S.log.length > 40) S.log.pop(); }
+function say(msg, alert=false){ S.banner = msg; S.bannerAlert = alert; }
+
+/* =====================================================================
+   4. RUNDE STARTEN
+   ===================================================================== */
+function layRedThrees(p, defer=false){
+  for(;;){
+    const r = p.hand.filter(isRed3);
+    if(!r.length) return;
+    for(const c of r){
+      p.hand.splice(p.hand.indexOf(c),1);
+      S.reds[p.team].push(c);
+      if(defer) p.owed++;                       // Ersatzkarten gibt es erst, wenn man am Zug ist
+      else if(S.stock.length){ p.hand.push(S.stock.pop()); }
+    }
+  }
+}
+function startRound(){
+  S.timers.forEach(clearTimeout); S.timers = [];
+  S.round++;
+  S.lead = S.lead < 0 ? Math.floor(rnd()*S.n) : (S.lead+1) % S.n;
+  S.stock = makeDeck(); S.discard = []; S.frozen = false; S.ended = false;
+  S.melds = Array.from({length:S.T},()=>[]); S.reds = Array.from({length:S.T},()=>[]);
+  S.known = {}; S.bait = null; S.selected = new Set(); S.target = null; S.drawn = []; S.drawHist = [];
+  S.players.forEach(p=>{ p.hand = []; p.hold = null; p.owed = 0; S.known[p.id] = []; });
+  for(const p of S.players){
+    const k = S.cfg.handSize + (p.id === S.lead ? 1 : 0);
+    for(let i=0;i<k;i++) p.hand.push(S.stock.pop());
+  }
+  S.players.forEach(p=>layRedThrees(p, true));
+  S.players.forEach(p=>sortHand(p.hand));
+  for(;;){
+    const c = S.stock.pop(); S.discard.push(c);
+    if(isWild(c) || isRed3(c)){ if(R.game.freezeOnStartCard) S.frozen = true; continue; }
+    break;
+  }
+  S.openingLeft = R.game.openingRound ? S.n : 0;
+  S.turn = S.lead;
+  log(`— Runde ${S.round} beginnt. ${S.players[S.lead].name} spielt aus. —`);
+  S.firstTurn = true;
+  startTurn();
+}
+function startTurn(){
+  const p = cur();
+  S.selected = new Set(); S.target = null; S.drawn = []; S.aiStage = 0;
+  S.startNoMeld = S.melds[p.team].length === 0;
+  S.firstDraw = false;
+  S.dead = isDead(p);
+  if(S.dead && !p.wasDead) log(`${p.name} ist tot gespielt (nur 1 Karte, keine Canasta): nur noch ziehen und abwerfen.`);
+  p.wasDead = S.dead;
+  if(S.firstTurn){
+    S.firstTurn = false;
+    if(p.owed > 0){ S.phase = 'draw'; S.firstDraw = true; }      // Startspieler zieht nur seine Ersatzkarten
+    else{ S.phase = 'play'; S.aiStage = 1; }
+  }
+  else{
+    S.phase = 'draw';
+    if(S.stock.length === 0 && !(!isOpening() && pickupOptions(p).length)){
+      log('Der Nachziehstapel ist leer – die Runde endet.');
+      return finishRound(null);
+    }
+  }
+  if(p.isHuman) say(S.phase==='draw' ? (S.firstDraw ? 'Du bist dran: ziehe die Ersatzkarten für deine roten Dreien.' : 'Du bist dran: ziehe Karten oder nimm den Ablagestapel.') : 'Du bist dran: wirf eine Karte ab.', true);
+  else say(`${p.name} ist am Zug.`);
+  render();
+  if(!p.isHuman) later(aiStep, AI.thinkMs ?? 700);
+}
+function endTurn(){
+  if(S.openingLeft > 0) S.openingLeft--;
+  S.turn = (S.turn + 1) % S.n;
+  startTurn();
+}
+
+/* =====================================================================
+   5. PLÄNE (Auslegen) – gemeinsame Prüfung für Mensch und Computer
+   Plan: { adds:[ {rank, ids:[Handkarten], top:bool} ] }  (top = oberste Ablagekarte beim Aufnehmen)
+   ===================================================================== */
+function validatePlan(p, plan, o={}){
+  const t = p.team, top = o.top || null, seen = new Set();
+  let value = 0, used = 0, newCan = 0;
+  if(!plan.adds.length) return {error:'Nichts zum Auslegen gewählt.', code:'empty'};
+  const touched = new Set();
+  for(const a of plan.adds){
+    if(touched.has(a.rank)) return {error:'Interner Fehler: doppelter Satz.', code:'dup'};
+    touched.add(a.rank);
+    const cards = [];
+    for(const id of a.ids){
+      const c = p.hand.find(x=>x.id===id);
+      if(!c || seen.has(id)) return {error:'Ungültige Kartenauswahl.', code:'sel'};
+      seen.add(id); cards.push(c);
+    }
+    used += cards.length;
+    if(a.top && top) cards.push(top);
+    if(cards.some(c=>c.rank==='3')) return {error:'Dreien können nicht ausgelegt werden.', code:'three'};
+    const wilds = cards.filter(isWild), nats = cards.filter(isNat);
+    const ex = a.rank === 'WILD' ? null : findMeld(t, a.rank);
+    if(a.rank === 'WILD'){
+      if(!R.canasta.wildCanastaAllowed) return {error:'Joker-Canastas sind in diesen Regeln nicht erlaubt.', code:'rule'};
+      if(nats.length || cards.length < R.canasta.wildCanastaSize) return {error:`Eine Joker-Canasta braucht genau ${R.canasta.wildCanastaSize}+ Wild Cards und keine Naturkarten.`, code:'wild'};
+      newCan++;
+    }else{
+      if(nats.some(c=>c.rank !== a.rank)) return {error:'Ein Satz darf nur einen Rang enthalten.', code:'rank'};
+      const totalW = wilds.length + (ex ? ex.cards.filter(isWild).length : 0);
+      const size = cards.length + (ex ? ex.cards.length : 0);
+      if(totalW > R.melds.maxWilds) return {error:`Höchstens ${R.melds.maxWilds} Wild Cards pro Satz.`, code:'maxwild'};
+      if(ex && wilds.length && R.canasta.noWildsInCanasta && isCanasta(ex)) return {error:'In eine fertige Canasta dürfen keine Wild Cards.', code:'canasta'};
+      if(!ex){
+        if(nats.length < R.melds.minNaturals) return {error:`Ein neuer Satz braucht mindestens ${R.melds.minNaturals} natürliche Karten.`, code:'nat'};
+        if(size < R.melds.minCards) return {error:`Ein Satz braucht mindestens ${R.melds.minCards} Karten.`, code:'size'};
+      }
+      const wasCan = ex ? isCanasta(ex) : false;
+      if(!wasCan && size >= R.canasta.size) newCan++;
+    }
+    value += sumVal(cards);
+  }
+  if(S.melds[t].length === 0){
+    const min = openingMin(t);
+    if(value < min) return {error:`Eröffnung: Dein Team braucht mindestens ${min} Punkte (aktuell ${value}).`, code:'open', value, min};
+  }
+  const remaining = p.hand.length - used + (o.pickup ? S.discard.length - 1 : 0);
+  if(remaining < R.goOut.minHandAfterMeld && canastaCount(t) + newCan < needCanastas())
+    return {error:`Nach dem Auslegen müssen ${R.goOut.minHandAfterMeld} Karten bleiben, solange noch keine ${needCanastas()===1?'Canasta':needCanastas()+' Canastas'} vorhanden ist.`, code:'keep', value};
+  return {ok:true, value, used, remaining, newCan};
+}
+function applyPlan(p, plan, top){
+  const t = p.team;
+  for(const a of plan.adds){
+    let m = a.rank === 'WILD' ? null : findMeld(t, a.rank);
+    if(!m){ m = {rank:a.rank, cards:[]}; S.melds[t].push(m); }
+    for(const id of a.ids){
+      const i = p.hand.findIndex(c=>c.id===id);
+      m.cards.push(p.hand.splice(i,1)[0]);
+    }
+    if(a.top && top) m.cards.push(top);
+    sortMeld(m);
+  }
+  const ids = new Set(plan.adds.flatMap(a=>a.ids));
+  S.known[p.id] = S.known[p.id].filter(c=>!ids.has(c.id));
+}
+
+/* Auswahl des Menschen -> Plan */
+function planFromSelection(p, ids, top, target){
+  const t = p.team;
+  const cards = ids.map(id=>p.hand.find(c=>c.id===id)).filter(Boolean);
+  if(cards.some(c=>c.rank==='3')) return {error:'Dreien können nicht ausgelegt werden.'};
+  const groups = {};
+  const grp = r => groups[r] || (groups[r] = {rank:r, ids:[], nat:0, top:false, ex:findMeld(t,r)});
+  cards.filter(isNat).forEach(c=>{ const g = grp(c.rank); g.ids.push(c.id); g.nat++; });
+  if(top){ const g = grp(top.rank); g.top = true; g.nat++; }
+  let wilds = cards.filter(isWild).map(c=>c.id);
+  const list = Object.values(groups);
+  const sizeOf = g => (g.ex ? g.ex.cards.length : 0) + g.ids.length + (g.top?1:0);
+  for(const g of list){
+    if(g.ex) continue;
+    if(g.nat < R.melds.minNaturals) return {error:`Für ${g.rank} fehlen natürliche Karten (mindestens ${R.melds.minNaturals}).`};
+    while(sizeOf(g) < R.melds.minCards){
+      if(!wilds.length) return {error:`Für ${g.rank} fehlen Karten (mindestens ${R.melds.minCards}).`};
+      g.ids.push(wilds.shift());
+    }
+  }
+  if(wilds.length){
+    const cands = wildTargets(p, list, wilds.length);
+    let tr = target;
+    if(!tr || !cands.includes(tr)) tr = cands.length === 1 ? cands[0] : null;
+    if(!tr) return {error: cands.length ? 'Wähle aus, wohin die Wild Cards sollen (Dropdown oder Klick auf einen eigenen Satz).' : 'Mit diesen Wild Cards lässt sich nichts auslegen.', needTarget: cands.length>1};
+    if(tr === 'WILD') return {plan:{adds:[...list.map(g=>({rank:g.rank,ids:g.ids,top:g.top})), {rank:'WILD', ids:wilds}]}};
+    let g = groups[tr];
+    if(!g){ g = grp(tr); list.push(g); }
+    g.ids.push(...wilds);
+  }
+  return {plan:{adds:list.map(g=>({rank:g.rank, ids:g.ids, top:g.top}))}};
+}
+function wildTargets(p, list, wildCount){
+  const t = p.team, out = [];
+  for(const g of list) out.push(g.rank);
+  for(const m of S.melds[t]) if(m.rank !== 'WILD' && !isCanasta(m) && !out.includes(m.rank)) out.push(m.rank);
+  if(R.canasta.wildCanastaAllowed && wildCount >= R.canasta.wildCanastaSize) out.push('WILD');
+  return out;
+}
+
+/* =====================================================================
+   6. SPIELAKTIONEN
+   ===================================================================== */
+function drawCards(p){
+  const k = (S.firstDraw ? 0 : drawCount()) + (p.owed || 0), got = [];
+  p.owed = 0; S.firstDraw = false;
+  for(let i=0;i<k && S.stock.length;i++){
+    const c = S.stock.pop();
+    if(isRed3(c)){ S.reds[p.team].push(c); if(p.isHuman) log(`Du ziehst eine rote 3 und legst sie aus.`); else log(`${p.name} legt eine rote 3 aus.`); i--; continue; }
+    p.hand.push(c); got.push(c.id);
+  }
+  sortHand(p.hand);
+  return got;
+}
+function pickupRuleCheck(p, plan, top){
+  const t = p.team, a = plan.adds.find(x=>x.rank===top.rank && x.top);
+  if(!a) return 'Die oberste Karte muss in einen Satz eingehen.';
+  const ex = findMeld(t, top.rank);
+  const hand = a.ids.map(id=>p.hand.find(c=>c.id===id));
+  const nat = hand.filter(isNat).length, wl = hand.filter(isWild).length;
+  const frozenFor = S.frozen || S.melds[t].length === 0;
+  if(!frozenFor){
+    if(ex || nat >= 2 || (R.pickup.allowOneNaturalPlusWildWhenOpen && nat >= 1 && wl >= 1)) return null;
+    return 'Du brauchst einen passenden Satz, 2 passende Karten oder 1 passende Karte + 1 Wild Card.';
+  }
+  if(nat >= R.pickup.naturalPairFromHandWhenFrozen) return null;
+  return S.frozen ? `Der Stapel ist eingefroren: Du brauchst ${R.pickup.naturalPairFromHandWhenFrozen} natürliche Karten gleichen Rangs aus der Hand.`
+                  : `Ohne eigene Auslage brauchst du ${R.pickup.naturalPairFromHandWhenFrozen} natürliche Karten gleichen Rangs aus der Hand.`;
+}
+function topCard(){ return S.discard[S.discard.length-1] || null; }
+function pickupBlocked(){
+  const top = topCard();
+  if(!top) return 'Der Ablagestapel ist leer.';
+  if(S.dead) return 'Du bist „tot gespielt“ (nur noch 1 Karte, keine Canasta): Du kannst nur ziehen und abwerfen.';
+  if(S.firstDraw) return 'Als Startspieler ziehst du nur die Ersatzkarten für deine roten Dreien.';
+  if(isOpening()) return 'In der Eröffnungsrunde darf der Stapel nicht aufgenommen werden.';
+  if(R.pickup.needsNaturalTopCard && !isNat(top)) return 'Die oberste Karte ist gesperrt (Drei oder Wild Card).';
+  if(!R.pickup.allowWhenOwnCanastaOfTopRank){
+    const m = findMeld(cur().team, top.rank);
+    if(m && isCanasta(m)) return `Dein Team hat bereits eine Canasta mit ${top.rank}: Der Stapel kann nicht aufgenommen werden.`;
+  }
+  return null;
+}
+function doPickup(p, plan, top){
+  S.discard.pop();
+  applyPlan(p, plan, top);
+  const gained = S.discard.splice(0);
+  p.hand.push(...gained);
+  S.known[p.id].push(...gained.filter(c=>!plan.adds.some(a=>a.ids.includes(c.id))));
+  S.frozen = false;
+  layRedThrees(p);
+  while(p.owed > 0 && S.stock.length){
+    p.owed--; const c = S.stock.pop();
+    if(isRed3(c)){ S.reds[p.team].push(c); p.owed++; } else p.hand.push(c);
+  }
+  p.owed = 0;
+  sortHand(p.hand);
+  S.drawn = gained.map(c=>c.id);
+  S.phase = 'play';
+  S.aiStage = 0;
+  const b = S.bait;
+  if(b && b.pid !== p.id && teamOf(b.pid) === p.team) S.bait = null;
+  log(R.ui.hidePileHistory ? `${p.name} nimmt den Ablagestapel.` : `${p.name} nimmt den Ablagestapel (${gained.length+1} Karten).`);
+  if(S.bait && S.bait.pid === p.id && S.bait.rank === top.rank){
+    say(`${p.name}: „Falle zugeschnappt!“ – ${p.name} hatte auf die ${top.rank} gelauert.`, true);
+    log(`★ ${p.name} hatte die ${top.rank} als Köder abgeworfen – Falle zugeschnappt!`);
+    S.bait = null;
+  }
+}
+function finishLay(p){
+  if(p.hand.length === 0){
+    const concealed = S.startNoMeld;
+    return finishRound(p.team, concealed);
+  }
+  render();
+}
+function discardCard(p, c){
+  p.hand.splice(p.hand.indexOf(c),1);
+  S.discard.push(c);
+  S.known[p.id] = S.known[p.id].filter(k=>k.id!==c.id);
+  const hide = R.ui.hidePileHistory;
+  if(isWild(c) && R.game.wildDiscardFreezes){
+    S.frozen = true;
+    log(`${p.name} wirft ${c.rank==='JOKER'?'einen Joker':'eine 2'} ab – der Stapel ist gesperrt.`);
+  }else log(hide ? `${p.name} wirft eine Karte ab.` : `${p.name} wirft ${cardName(c)} ab.`);
+  if(p.hand.length === 0) return finishRound(p.team, S.startNoMeld);
+  endTurn();
+}
+function canDiscard(p, c){
+  if(isWild(c) && !R.game.allowWildDiscard && p.hand.some(x=>!isWild(x))) return 'Wild Cards dürfen nicht abgeworfen werden.';
+  if(p.hand.length === 1 && canastaCount(p.team) < needCanastas())
+    return `Zum Ausmachen braucht dein Team ${needCanastas()===1?'eine Canasta':needCanastas()+' Canastas'}.`;
+  return null;
+}
+
+/* ---- Eingaben des Menschen ---- */
+function hint(msg, bad=false){ S.hint = msg; S.hintBad = bad; render(); }
+function humanTurn(){ return S && !S.ended && S.phase !== 'between' && cur().isHuman; }
+function onDraw(){
+  if(!humanTurn() || S.phase !== 'draw') return;
+  if(S.stock.length === 0) return hint('Der Nachziehstapel ist leer. Nimm den Ablagestapel auf.', true);
+  const p = cur();
+  S.drawn = drawCards(p);
+  S.drawHist = (S.drawHist||[]).concat(p.hand.filter(c=>S.drawn.includes(c.id))).slice(-3);
+  S.phase = 'play'; S.hint = '';
+  log(`Du ziehst ${S.drawn.length} Karte${S.drawn.length===1?'':'n'}.`);
+  say(isOpening() ? 'Eröffnungsrunde: jetzt eine Karte abwerfen.' : 'Lege Sätze aus oder wirf eine Karte ab.');
+  render();
+}
+function onPickup(){
+  if(!humanTurn() || S.phase !== 'draw') return;
+  const p = cur(), top = topCard();
+  const blocked = pickupBlocked(); if(blocked) return hint(blocked, true);
+  const r = planFromSelection(p, [...S.selected], top, S.target);
+  if(r.error) return hint(r.error, true);
+  const rule = pickupRuleCheck(p, r.plan, top); if(rule) return hint(rule, true);
+  const v = validatePlan(p, r.plan, {top, pickup:true}); if(v.error) return hint(v.error, true);
+  S.hint = ''; S.selected = new Set(); S.target = null;
+  doPickup(p, r.plan, top);
+  say('Stapel aufgenommen. Lege aus oder wirf eine Karte ab.');
+  render();
+}
+function onLay(){
+  if(!humanTurn() || S.phase !== 'play') return;
+  if(isOpening()) return hint('In der Eröffnungsrunde wird nur gezogen und abgeworfen.', true);
+  if(S.dead) return hint('Du bist „tot gespielt“ und kannst nichts mehr auslegen – nur ziehen und abwerfen.', true);
+  const p = cur();
+  if(!S.selected.size) return hint('Wähle zuerst Karten aus.', true);
+  const r = planFromSelection(p, [...S.selected], null, S.target);
+  if(r.error) return hint(r.error, true);
+  const v = validatePlan(p, r.plan); if(v.error) return hint(v.error, true);
+  applyPlan(p, r.plan, null);
+  S.selected = new Set(); S.target = null; S.hint = '';
+  log(`Du legst ${v.used} Karten aus (${v.value} Punkte).`);
+  say('Ausgelegt. Weiter legen oder abwerfen.');
+  finishLay(p);
+}
+function onDiscard(cardId){
+  if(!humanTurn() || S.phase !== 'play') return;
+  const p = cur();
+  const id = cardId ?? (S.selected.size === 1 ? [...S.selected][0] : null);
+  if(id == null) return hint('Wähle genau eine Karte zum Abwerfen.', true);
+  const c = p.hand.find(x=>x.id === id);
+  if(!c) return;
+  const err = canDiscard(p, c); if(err) return hint(err, true);
+  S.hint = ''; S.selected = new Set();
+  discardCard(p, c);
+}
+function toggleSelect(id){
+  if(!humanTurn()) return;
+  if(S.selected.has(id)) S.selected.delete(id); else S.selected.add(id);
+  S.hint = '';
+  render();
+}
+
+/* =====================================================================
+   7. COMPUTERGEGNER
+   ===================================================================== */
+function eff(p){
+  const d = S.diff;
+  if(!p.persona) return {hunger:.5, patience:0, bluff:0, caution:.5, greed:.5, memory:true, mistake:0};
+  const t = p.persona.traits;
+  return {
+    hunger: Math.min(1, (t.pileHunger ?? .5) + (d.hungerAdd||0)),
+    patience: t.patience ?? .5,
+    bluff: S.cfg.tricks ? (t.bluff ?? 0) * (d.bluffMul ?? 1) : 0,
+    caution: (t.caution ?? .5) * (d.cautionMul ?? 1),
+    greed: t.greedForCanasta ?? .5,
+    memory: d.memory !== false,
+    mistake: d.mistakeChance || 0
+  };
+}
+function groupNat(hand){ const g = {}; hand.forEach(c=>{ if(isNat(c)) (g[c.rank] = g[c.rank] || []).push(c); }); return g; }
+
+function aiBuildPlan(p, o={}){
+  if(S.dead && p === cur()) return null;
+  const e = eff(p), t = p.team, top = o.top || null, base = new Set(o.baseIds || []);
+  const hasMeld = S.melds[t].length > 0;
+  const nat = groupNat(p.hand);
+  const adds = {};
+  const add = r => adds[r] || (adds[r] = {rank:r, ids:[], top:false, ex:findMeld(t,r)});
+  if(top){ const g = add(top.rank); g.top = true; base.forEach(id=>g.ids.push(id)); }
+  for(const r in nat){
+    const ex = findMeld(t, r);
+    const total = nat[r].length + (top && top.rank === r ? 1 : 0);
+    if(top && top.rank === r){ nat[r].forEach(c=>{ if(!adds[r].ids.includes(c.id)) adds[r].ids.push(c.id); }); continue; }
+    if(ex){ const g = add(r); nat[r].forEach(c=>g.ids.push(c.id)); continue; }
+    if(total >= R.melds.minCards){
+      if(total === 3 && !top && p.hand.length >= 7 && S.discard.length >= 3 && rnd() < e.bluff*.45){ p.hold = r; continue; }
+      const g = add(r); nat[r].forEach(c=>g.ids.push(c.id));
+    }
+  }
+  const wilds = p.hand.filter(c=>isWild(c) && !base.has(c.id) && !Object.values(adds).some(g=>g.ids.includes(c.id)));
+  const gSize = g => (g.ex ? g.ex.cards.length : 0) + g.ids.length + (g.top?1:0);
+  const gWild = g => (g.ex ? g.ex.cards.filter(isWild).length : 0) + g.ids.filter(id=>isWild(p.hand.find(c=>c.id===id)||{})).length;
+  const takeWild = (g,k) => { for(let i=0;i<k;i++) g.ids.push(wilds.shift().id); };
+  // Wilds: Canastas vervollständigen
+  const cn = R.canasta.size;
+  const groupsAll = () => {
+    const l = Object.values(adds);
+    for(const m of S.melds[t]) if(m.rank !== 'WILD' && !adds[m.rank]) l.push(add(m.rank));
+    return l;
+  };
+  for(const g of groupsAll().sort((a,b)=>gSize(b)-gSize(a))){
+    if(g.ex && isCanasta(g.ex)) continue;
+    const need = cn - gSize(g);
+    if(need > 0 && need <= wilds.length && gWild(g) + need <= R.melds.maxWilds && (need <= 1 || rnd() < e.greed)) takeWild(g, need);
+  }
+  // Wilds: Paare zu Sätzen ergänzen
+  const mkPairs = () => Object.keys(nat).filter(r=>nat[r].length === 2 && !adds[r] && !findMeld(t,r) && !(top && top.rank===r)).sort((a,b)=>sumVal(nat[b])-sumVal(nat[a]));
+  const needOpen = !hasMeld;
+  const planValue = () => Object.values(adds).reduce((s,g)=>{
+    const cs = g.ids.map(id=>p.hand.find(c=>c.id===id)).filter(Boolean); if(g.top && top) cs.push(top); return s + sumVal(cs); }, 0);
+  if(needOpen && planValue() < openingMin(t)){
+    for(const r of mkPairs()){
+      if(!wilds.length) break;
+      const g = add(r); nat[r].forEach(c=>g.ids.push(c.id)); takeWild(g,1);
+      if(planValue() >= openingMin(t)) break;
+    }
+    if(planValue() < openingMin(t)){
+      for(const g of Object.values(adds)){
+        while(wilds.length && gWild(g) < R.melds.maxWilds && planValue() < openingMin(t) && !(g.ex && isCanasta(g.ex))) takeWild(g,1);
+      }
+    }
+    if(planValue() < openingMin(t)) return null;
+    // Patient: Wer knapp eröffnet, hält sich manchmal noch zurück (verdeckt bleiben)
+    if(!top && p.hand.length > 8 && planValue() < openingMin(t) + 25 && rnd() < e.patience*.35) return null;
+  }else if(hasMeld && wilds.length >= 2 && rnd() < e.greed){
+    const r = mkPairs()[0];
+    if(r){ const g = add(r); nat[r].forEach(c=>g.ids.push(c.id)); takeWild(g,1); }
+  }
+  // Joker-Canasta
+  const wl = p.hand.filter(isWild);
+  if(!top && R.canasta.wildCanastaAllowed && wl.length >= R.canasta.wildCanastaSize && !Object.values(adds).some(g=>g.ids.length))
+    return {adds:[{rank:'WILD', ids:wl.map(c=>c.id)}]};
+  let list = Object.values(adds).filter(g=>g.ids.length || g.top);
+  const clean = l => ({adds:l.map(g=>({rank:g.rank, ids:g.ids, top:g.top}))});
+  for(let guard=0; guard<8; guard++){
+    if(!list.length) return null;
+    const plan = clean(list);
+    const v = validatePlan(p, plan, {top, pickup:!!top});
+    const wouldDie = v.ok && !top && S.diff.mistakeChance < .1 && R.goOut.deadHandEnabled && v.remaining - 1 <= R.goOut.deadHandMaxCards && canastaCount(t) + v.newCan < needCanastas();
+    if(v.ok && !wouldDie) return plan;
+    if(!wouldDie && v.code !== 'keep') return null;
+    const gv = g => sumVal(g.ids.map(id=>p.hand.find(c=>c.id===id)).filter(Boolean));
+    const removable = list.filter(g=>!g.top).sort((a,b)=>gv(a)-gv(b));
+    if(!removable.length) return null;
+    list = list.filter(g=>g!==removable[0]);
+  }
+  return null;
+}
+
+function pickupOptions(p){
+  const top = topCard();
+  if(!top || pickupBlocked()) return [];
+  const t = p.team, out = [];
+  const nat = p.hand.filter(c=>isNat(c) && c.rank === top.rank), wl = p.hand.filter(isWild);
+  const frozenFor = S.frozen || S.melds[t].length === 0;
+  const tryOpt = (ids, tag) => {
+    const plan = aiBuildPlan(p, {top, baseIds:ids});
+    if(!plan) return;
+    if(pickupRuleCheck(p, plan, top)) return;
+    out.push({ids, plan, tag});
+  };
+  if(!frozenFor && findMeld(t, top.rank)) tryOpt([], 'meld');
+  if(nat.length >= 2) tryOpt([nat[0].id, nat[1].id], 'pair');
+  if(!frozenFor && R.pickup.allowOneNaturalPlusWildWhenOpen && nat.length >= 1 && wl.length) tryOpt([nat[0].id, wl[0].id], 'wild');
+  return out;
+}
+function pileScore(p, opt){
+  const e = eff(p), t = p.team, top = topCard();
+  const size = S.discard.length, pts = sumVal(S.discard);
+  let s = size*1.2 + pts/10;
+  const ex = findMeld(t, top.rank);
+  if(opt.tag === 'meld') s += 4;
+  if(ex && ex.cards.length + 1 >= R.canasta.size - 1) s += 4;
+  if(S.melds[t].length === 0) s += -e.patience*5;
+  if(size <= 3 && !ex) s -= 3*e.patience;
+  if(opt.tag === 'wild') s -= 2;
+  if(S.stock.length < 10) s += 4;                         // Endspiel: Haufen blockiert Gegner
+  const lead = Math.max(...S.scores.filter((_,i)=>i!==t));
+  if(lead >= S.cfg.target*.8) s += 3;
+  return s;
+}
+function aiDecidePickup(p){
+  const opts = pickupOptions(p);
+  if(!opts.length) return null;
+  const e = eff(p);
+  opts.forEach(o=>o.score = pileScore(p,o));
+  opts.sort((a,b)=>b.score-a.score);
+  const threshold = 7 + (.5 - e.hunger)*10;
+  if(S.stock.length === 0 || opts[0].score >= threshold) return opts[0];
+  return null;
+}
+
+/* ---- Abwerfen mit Gedächtnis, Vorsicht und Täuschung ---- */
+function danger(p, rank){
+  const e = eff(p); let d = 0;
+  for(const q of S.players){
+    if(q.team === p.team) continue;
+    const m = findMeld(q.team, rank);
+    if(m && !S.frozen) d += 55;
+    if(e.memory){
+      const k = S.known[q.id].filter(c=>c.rank===rank).length;
+      d += k >= 2 ? 45 : (k === 1 && !m ? 12 : 0);
+    }
+  }
+  return d * (1 + Math.min(S.discard.length, 12)/5);
+}
+function aiChooseDiscard(p){
+  const e = eff(p);
+  let cands = p.hand.filter(c=>!isWild(c));
+  if(!cands.length) cands = p.hand.slice();
+  if(cands.length === 1) return cands[0];
+  const nat = groupNat(p.hand);
+  // Köder: aus einer zurückgehaltenen Dreiergruppe eine Karte abwerfen und das Paar behalten
+  if(e.bluff > 0 && p.hold && nat[p.hold] && nat[p.hold].length === 3 && !findMeld(p.team,p.hold) && danger(p,p.hold) < 30){
+    const c = nat[p.hold][0]; S.bait = {pid:p.id, rank:p.hold}; p.hold = null; return c;
+  }
+  const scored = cands.map(c=>{
+    const cnt = nat[c.rank] ? nat[c.rank].length : 0;
+    let keep = cnt >= 3 ? 30 : cnt === 2 ? 18 : 0;
+    if(p.hold === c.rank) keep += 15;
+    let sc = cardVal(c)*.5 - keep - danger(p, c.rank)*e.caution;
+    if(isBlack3(c)){ sc += 8 + (S.discard.length >= 5 ? 25*e.caution : 0); }
+    if(!isNat(c) && !isBlack3(c)) sc += 0;
+    sc += rnd()*2;
+    return {c, sc};
+  }).sort((a,b)=>b.sc-a.sc);
+  if(e.mistake && rnd() < e.mistake) return scored[Math.min(scored.length-1, Math.floor(rnd()*3))].c;
+  // Wild Card als Sperre: ist jede Abwurfkarte gefährlich und der Haufen groß, friert eine Wild Card ihn ein
+  const wl = p.hand.filter(isWild).sort((a,b)=>cardVal(a)-cardVal(b));
+  if(R.game.allowWildDiscard && R.game.wildDiscardFreezes && wl.length && !S.frozen && S.discard.length >= 5 && p.hand.length > 3){
+    const bd = danger(p, scored[0].c.rank) * e.caution;
+    if(bd >= 25 && rnd() < .4 + e.caution*.4) return wl[0];
+  }
+  return scored[0].c;
+}
+function aiStep(){
+  const p = cur();
+  if(!p || p.isHuman || S.ended) return;
+  const delay = AI.thinkMs ?? 700;
+  if(S.phase === 'draw'){
+    const opt = aiDecidePickup(p);
+    if(opt){
+      doPickup(p, opt.plan, topCard());
+    }else{
+      if(S.stock.length === 0) return finishRound(null);
+      S.drawn = drawCards(p); S.phase = 'play';
+      log(`${p.name} zieht ${S.drawn.length} Karte${S.drawn.length===1?'':'n'}.`);
+    }
+    render(); S.aiStage = 1;
+    return later(aiStep, delay);
+  }
+  if(S.phase === 'play'){
+    if(S.aiStage === 1 && !isOpening()){
+      S.aiStage = 2;
+      const plan = aiBuildPlan(p, {});
+      if(plan){
+        const v = validatePlan(p, plan);
+        if(v.ok){
+          applyPlan(p, plan, null);
+          log(`${p.name} legt ${v.used} Karten aus (${v.value} Punkte).`);
+          say(`${p.name} legt aus.`);
+          if(p.hand.length === 0) return finishRound(p.team, S.startNoMeld);
+          render();
+          return later(aiStep, delay);
+        }
+      }
+    }
+    const c = aiChooseDiscard(p);
+    discardCard(p, c);
+  }
+}
+
+/* =====================================================================
+   8. RUNDENENDE & WERTUNG
+   ===================================================================== */
+function teamScore(t, outTeam, concealed){
+  const melds = S.melds[t];
+  const meldPts = melds.reduce((s,m)=>s+sumVal(m.cards),0);
+  const canasta = melds.filter(isCanasta).reduce((s,m)=>s+canastaBonus(m),0);
+  const nReds = S.reds[t].length;
+  let reds = nReds*R.cardValues.redThree + (nReds === 4 ? R.redThrees.bonusAllFour : 0);
+  if(melds.length === 0 && R.redThrees.negativeIfNoMeld) reds = -reds;
+  const out = outTeam === t ? (concealed ? R.goOut.concealedBonus : R.goOut.bonus) : 0;
+  const hand = teamMembers(t).reduce((s,p)=>s+sumVal(p.hand),0);
+  return {meldPts, canasta, reds, out, hand, total: meldPts + canasta + reds + out - hand};
+}
+function finishRound(outTeam, concealed=false){
+  S.timers.forEach(clearTimeout); S.timers = [];
+  S.phase = 'between'; S.ended = true;
+  const rows = [];
+  for(let t=0;t<S.T;t++){ const r = teamScore(t, outTeam, concealed); S.scores[t] += r.total; rows.push(r); }
+  const hit = S.scores.map((s,i)=>({s,i})).filter(x=>x.s >= S.cfg.target).sort((a,b)=>b.s-a.s);
+  S.winner = hit.length ? hit[0].i : null;
+  S.lastRows = rows; S.lastOut = outTeam; S.lastConcealed = concealed;
+  log(outTeam == null ? 'Runde beendet (Stapel leer).' : `Runde beendet: ${teamName(outTeam)} macht aus${concealed?' (verdeckt)':''}.`);
+  say('Runde beendet.', true);
+  render();
+  showRoundModal();
+}
+function showRoundModal(){
+  const rows = S.lastRows;
+  const head = '<tr><th></th>' + rows.map((_,t)=>`<th>${esc(teamName(t))}</th>`).join('') + '</tr>';
+  const line = (label, f) => `<tr><td>${label}</td>${rows.map(r=>`<td>${f(r)}</td>`).join('')}</tr>`;
+  const sgn = n => (n>0?'+':'') + fmt(n);
+  let html = `<table class="res">${head}
+    ${line('Auslage', r=>sgn(r.meldPts))}${line('Canasta-Boni', r=>sgn(r.canasta))}${line('Rote Dreien', r=>sgn(r.reds))}
+    ${line(S.lastConcealed?'Ausmachen (verdeckt)':'Ausmachen', r=>sgn(r.out))}${line('Restkarten', r=>sgn(-r.hand))}
+    <tr class="sum"><td>Runde</td>${rows.map(r=>`<td>${sgn(r.total)}</td>`).join('')}</tr>
+    <tr class="sum"><td>Gesamt</td>${S.scores.map(s=>`<td>${fmt(s)}</td>`).join('')}</tr></table>`;
+  const over = S.winner != null;
+  if(over) html += `<p><strong>🏆 ${esc(teamName(S.winner))} gewinnt die Partie!</strong></p>`;
+  $('#roundTitle').textContent = over ? 'Partie beendet' : `Abrechnung Runde ${S.round}`;
+  $('#roundBody').innerHTML = html;
+  $('#btnNext').textContent = over ? 'Neue Partie' : 'Nächste Runde';
+  $('#mRound').classList.add('show');
+  let sec = over ? 0 : (R.game.nextRoundSeconds || 0);
+  const id = S.id;
+  const tick = () => {
+    if(!S || S.id !== id || !$('#mRound').classList.contains('show')) return;
+    $('#countdown').textContent = sec > 0 ? `Nächste Runde startet automatisch in ${sec} s` : '';
+    if(sec-- <= 0 && !over) return nextRound();
+    if(sec >= -1) S.timers.push(setTimeout(tick, 1000));
+  };
+  S.autoSpectate = !!S.cfg.spectate;
+  if(S.cfg.spectate && !over){ sec = 3; }
+  tick();
+}
+function nextRound(){
+  $('#mRound').classList.remove('show');
+  if(S.winner != null){
+    const cfg = S.cfg; return newGame(cfg);
+  }
+  startRound();
+}
+
+/* =====================================================================
+   9. DARSTELLUNG
+   ===================================================================== */
+function meldHTML(m, own){
+  const can = isCanasta(m), type = can ? canastaType(m) : '';
+  const lbl = m.rank === 'WILD' ? 'Joker' : m.rank;
+  const tag = can ? ({pure:' · rein',mixed:' · gemischt',wild:' · Joker'})[type] : '';
+  return `<div class="meld ${own?'own':''} ${type} ${own && S.target === m.rank ? 'target':''}" data-rank="${m.rank}" title="${own?'Klicken: Wild Cards hierhin zuordnen':''}">
+    <div class="mlabel">${lbl} · ${m.cards.length}${tag}</div><div class="mcards">${m.cards.map(c=>cardHTML(c,'small')).join('')}</div></div>`;
+}
+function teamZone(t, own){
+  const reds = S.reds[t];
+  return `<div class="zone"><h4>${own?'Eure Auslage':'Auslage'} – ${esc(teamName(t))}</h4>
+    <div class="melds">${S.melds[t].map(m=>meldHTML(m, own)).join('') || '<span class="detail">noch nichts ausgelegt</span>'}</div>
+    ${reds.length ? `<div class="reds">Rote Dreien: ${reds.map(c=>cardHTML(c,'tiny')).join('')}</div>` : ''}</div>`;
+}
+function render(){
+  if(!S || S.phase === 'setup') return;
+  const p0 = me(), myT = p0.team;
+  $('#meta').textContent = `Runde ${S.round} · Ziel ${fmt(S.cfg.target)} Punkte · ${S.n} Spieler · ${S.diff.label||''}`;
+  $('#banner').textContent = S.banner || ''; $('#banner').className = 'banner' + (S.bannerAlert ? ' alert' : '');
+  // Tisch
+  const oppHTML = q=>`<div class="opp ${cur()===q && !S.ended?'active':''}"><div class="nm">${esc(q.name)}</div>
+      <div class="sub">${esc(q.persona.style||'')} · ${q.hand.length} Karten${isDead(q) ? ' · <b style="color:var(--bad)">tot gespielt</b>' : ''}</div>
+      <div class="fan">${Array.from({length:Math.min(q.hand.length,14)},()=>backHTML()).join('')}</div></div>`;
+  const oppTeams = [...new Set(S.players.filter(q=>q.team!==myT).map(q=>q.team))];
+  const top = topCard();
+  const pileCards = top ? `<div class="stackwrap ${S.discard.length>8?'s3':S.discard.length>3?'s2':'s1'}">${cardHTML(top)}</div>` : '';
+  const pileCount = R.ui.hidePileHistory ? '' : ` (${S.discard.length})`;
+  const center = `<div class="pile"><div class="slot">${S.stock.length?backHTML():'<div class="emptyslot"></div>'}</div>Nachziehstapel (${S.stock.length})</div>
+    <div class="pile"><div class="slot">${pileCards || '<div class="emptyslot"></div>'}</div>Ablage${pileCount} ${S.frozen?'<span class="frozen">❄ gesperrt</span>':(top && !isNat(top)?'<span class="frozen">gesperrt</span>':'')}</div>`;
+  const groups = oppTeams.map(t=>{
+    const members = S.players.slice(1).filter(q=>q.team===t);
+    return `<div class="oppgroup"><div class="opprow">${members.map(oppHTML).join('')}</div>${teamZone(t,false)}</div>`;
+  }).join('');
+  const handHTML = p0.hand.map(c=>cardHTML(c, (S.selected.has(c.id)?'selected ':'') + (S.drawn.includes(c.id)?'new':''), `role="button" tabindex="0" aria-label="${cardName(c)}"`)).join('');
+  const tracker = `<span class="tracker" title="Zuletzt gezogene Karten (neueste links)"><span class="detail">Zuletzt gezogen:</span>${(S.drawHist||[]).slice().reverse().map(c=>cardHTML(c,'tiny')).join('') || '<span class="detail">–</span>'}</span>`;
+  $('#table').innerHTML = `<div class="oppgroups">${groups}</div>
+    <div class="center">${center}</div>
+    ${teamZone(myT,true)}
+    <div class="me"><div class="mehead ${cur()===p0&&!S.ended?'active':''}"><span class="nm">${esc(p0.name)} · ${p0.hand.length} Karten</span>${tracker}
+      <span class="detail">${p0.isHuman?'Klick = auswählen · Doppelklick = abwerfen':'Zuschauermodus'}</span></div>
+      <div class="hand" id="hand">${handHTML}</div></div>`;
+  fitHand();
+  // Seitenleiste
+  $('#scores').innerHTML = Array.from({length:S.T},(_,t)=>{
+    const sc = teamScore(t, null, false), pct = Math.max(0, Math.min(100, S.scores[t]/S.cfg.target*100));
+    const nCan = canastaCount(t);
+    return `<div class="team"><div class="row"><strong>${esc(teamName(t))}${t===myT?' (du)':''}</strong><span>${fmt(S.scores[t])}${sc.reds||sc.meldPts||sc.canasta ? ` <small style="color:var(--gold)">(Runde ${(sc.meldPts+sc.canasta+Math.abs(sc.reds))>0?'+':''}${fmt(sc.meldPts+sc.canasta+Math.abs(sc.reds))})</small>` : ''}</span></div>
+      <div class="bar"><i style="width:${pct}%"></i></div>
+      <div class="detail">Runde: Auslage ${fmt(sc.meldPts)} · Canastas ${nCan} (+${fmt(sc.canasta)}) · Rote 3: ${S.reds[t].length} (${fmt(Math.abs(sc.reds))} Punkte)${S.reds[t].length && !S.melds[t].length && R.redThrees.negativeIfNoMeld ? ' – zählt nur, wenn bis Rundenende ausgelegt wurde, sonst Abzug' : ''}${S.melds[t].length?'':` · Eröffnung ab ${openingMin(t)}`}</div></div>`;
+  }).join('') + `<div class="detail">Ausmachen: ${needCanastas()} Canasta${needCanastas()>1?'s':''} nötig.</div>`;
+  $('#log').innerHTML = S.log.slice(0,14).map(l=>`<div>${esc(l)}</div>`).join('');
+  // Aktionen
+  const ht = humanTurn(), draw = ht && S.phase==='draw', play = ht && S.phase==='play';
+  $('#aDraw').disabled = !draw;
+  $('#aPickup').disabled = !draw || !!pickupBlocked();
+  $('#aLay').disabled = !play || isOpening() || S.dead || !S.selected.size;
+  $('#aDiscard').disabled = !play || S.selected.size !== 1;
+  $('#aDiscard').textContent = isOpening() && play ? 'Karte abwerfen' : 'Abwerfen';
+  let h = S.hint;
+  if(!h){
+    if(!ht) h = S.ended ? '' : `${cur().name} ist am Zug.`;
+    else if(draw && S.firstDraw) h = `Ziehe ${me().owed} Ersatzkarte${me().owed>1?'n':''} für deine roten Dreien, dann wirf eine Karte ab.`;
+    else if(S.dead && ht) h = 'Du bist „tot gespielt“ (1 Karte, keine Canasta): nur ziehen und abwerfen.';
+    else if(draw) h = isOpening() ? 'Eröffnungsrunde: ziehe 1 Karte (der Ablagestapel ist gesperrt).' : (pickupBlocked() || 'Ziehen – oder markiere passende Karten und nimm den Ablagestapel auf.');
+    else h = isOpening() ? 'Eröffnungsrunde: wirf eine Karte ab.' : 'Markiere Karten zum Auslegen – oder wirf eine ab.';
+  }
+  $('#hint').textContent = h; $('#hint').style.color = S.hintBad ? 'var(--bad)' : '';
+  $('#status').textContent = S.log[0] || '';
+  // Wild-Zuordnung
+  const sel = $('#wildTarget'), selCards = [...S.selected].map(id=>p0.hand.find(c=>c.id===id)).filter(Boolean);
+  const wn = selCards.filter(isWild).length;
+  if(play || draw){
+    const groups = {}; selCards.filter(isNat).forEach(c=>groups[c.rank]={rank:c.rank});
+    if(draw && top && isNat(top)) groups[top.rank] = {rank:top.rank};
+    const cands = wn ? wildTargets(p0, Object.values(groups), wn) : [];
+    const need = Object.values(groups).filter(g=>!findMeld(myT,g.rank) && selCards.filter(c=>c.rank===g.rank).length + (draw&&top&&top.rank===g.rank?1:0) < R.melds.minCards).length;
+    if(cands.length > 1 && wn > need){
+      sel.hidden = false;
+      sel.innerHTML = '<option value="">Wild Cards zuordnen …</option>' + cands.map(r=>`<option value="${r}" ${S.target===r?'selected':''}>${r==='WILD'?'Neue Joker-Canasta':'Satz '+r}</option>`).join('');
+    }else sel.hidden = true;
+  }else sel.hidden = true;
+}
+function fitHand(){
+  const h = $('#hand'); if(!h) return;
+  const cards = [...h.querySelectorAll('.card')]; if(cards.length < 2) return;
+  const cw = cards[0].getBoundingClientRect().width || 78;
+  const avail = h.clientWidth - 16;
+  const step = Math.max(20, Math.min(cw + 6, (avail - cw) / (cards.length - 1)));
+  cards.forEach((c,i)=>{ c.style.marginLeft = i ? (step - cw) + 'px' : '0'; });
+}
+
+/* =====================================================================
+   10. REGELTEXT (wird aus rules.js erzeugt)
+   ===================================================================== */
+function rulesHTML(){
+  const v = R.cardValues, o = R.opening.map(e=>`${e.from <= -99999 ? 'unter 0' : 'ab '+fmt(e.from)}: <b>${e.min}</b>`).join(' · ');
+  const cs = Object.entries(R.goOut.canastasRequired).map(([n,k])=>`${n} Spieler: ${k}`).join(', ');
+  const ds = Object.entries(R.game.drawFromStock).map(([n,k])=>`${n} Spieler: ${k}`).join(', ');
+  return `<p class="note">${RULES_LOADED ? 'Diese Werte stammen aus <b>rules.js</b>.' : '⚠ rules.js wurde nicht gefunden – es gelten die Standardwerte.'} Änderungen dort wirken nach dem Neuladen der Seite.</p>
+  <h3>Ziel</h3><ul><li>Bilde mit deinem Team Sätze (mind. ${R.melds.minCards} Karten gleichen Rangs, mind. ${R.melds.minNaturals} natürliche, höchstens ${R.melds.maxWilds} Wild Cards) und sammle Canastas (${R.canasta.size}+ Karten).</li>
+  <li>Wer zuerst die Siegpunktzahl (${fmt(S.cfg.target)}) erreicht, gewinnt. Es gibt ${S.n} Spieler${S.n===4?' – Teams: du + '+esc(S.players[2].name)+' gegen '+esc(S.players[1].name)+' + '+esc(S.players[3].name):''}.</li></ul>
+  <h3>Karten</h3><ul><li>Wild Cards: 2 und Joker.${R.game.allowWildDiscard ? ' Wirft jemand eine Wild Card ab' + (R.game.wildDiscardFreezes ? ', ist der Stapel gesperrt (eingefroren): Man braucht dann ein Paar aus der Hand, um ihn samt Wild Card aufzunehmen.' : '.') : ' Wild Cards dürfen nicht abgeworfen werden.'} Rote Dreien werden sofort ausgelegt und ersetzt. Schwarze Dreien sind Stopper (der Stapel kann nicht aufgenommen werden).</li>
+  ${R.ui.hidePileHistory ? '<li>Vom Ablagestapel siehst du nur die oberste Karte – den Rest musst du dir merken.</li>' : ''}
+  ${R.goOut.deadHandEnabled ? `<li>„Tot gespielt“: Wer nur noch ${R.goOut.deadHandMaxCards} Karte hat und keine nötige Canasta, kann nur noch ziehen und abwerfen – kein Auslegen, kein Aufnehmen, kein Ausmachen.</li>` : ''}
+  <li>Werte: Joker ${v.JOKER}, 2 und Ass ${v.A}, K–8 ${v.K}, 7–4 ${v['7']}, schwarze 3 ${v.blackThree}, rote 3 ${v.redThree}.</li></ul>
+  <h3>Zug</h3><ul><li>Ziehen (${ds}) oder Ablagestapel aufnehmen – dann Auslegen – dann genau eine Karte abwerfen.</li>
+  ${R.game.openingRound ? '<li>Eröffnungsrunde: Ein voller Umlauf nur Ziehen (1 Karte) und Abwerfen.</li>' : ''}
+  <li>Eröffnungswert (erste Auslage): ${o}.</li></ul>
+  <h3>Ablagestapel</h3><ul><li>Oberste Karte muss natürlich sein. Ist der Stapel eingefroren${R.game.freezeOnStartCard?' (Startkarte Wild/rote 3)':''} oder hat das Team noch nichts ausgelegt, braucht man ${R.pickup.naturalPairFromHandWhenFrozen} passende natürliche Karten aus der Hand.${R.pickup.allowWhenOwnCanastaOfTopRank?'':' Hat das Team schon eine Canasta des Rangs der obersten Karte, darf der Stapel nicht aufgenommen werden.'}</li>
+  <li>Sonst genügt ein passender Satz, ein Paar${R.pickup.allowOneNaturalPlusWildWhenOpen?' oder 1 Karte + 1 Wild Card':''}.</li></ul>
+  <h3>Boni</h3><ul><li>Canasta: rein +${fmt(R.canasta.pureBonus)}, gemischt +${fmt(R.canasta.mixedBonus)}${R.canasta.wildCanastaAllowed?`, ${R.canasta.wildCanastaSize} Wild Cards +${fmt(R.canasta.wildBonus)}`:''}.</li>
+  <li>Rote Dreien je ${R.cardValues.redThree}, alle vier +${R.redThrees.bonusAllFour}${R.redThrees.negativeIfNoMeld?' (ohne Auslage negativ)':''}.</li>
+  <li>Ausmachen: +${R.goOut.bonus}, verdeckt +${R.goOut.concealedBonus}. Nötige Canastas: ${cs}. Nach dem Auslegen bleiben mind. ${R.goOut.minHandAfterMeld} Karten, solange die Canasta fehlt.</li></ul>
+  <h3>Die Computergegner</h3><ul><li>Jeder Gegner hat eine eigene Spielweise: Manche nehmen den Haufen sofort, andere warten bewusst, halten Karten zurück oder stellen Fallen (z. B. eine von drei gleichen Karten abwerfen, um dich zum Abwerfen desselben Rangs zu verleiten).</li>
+  <li>Sie merken sich, welche Karten Gegner vom Stapel genommen haben, und werfen ungern Ränge ab, die du verwerten kannst.</li></ul>`;
+}
+
+/* =====================================================================
+   11. MUSIK
+   ===================================================================== */
+const music = {audio:new Audio(), list:[], idx:0, playing:false, local:false};
+function shuffleArr(a){ a = a.slice(); for(let i=a.length-1;i>0;i--){ const j = Math.floor(rnd()*(i+1)); [a[i],a[j]] = [a[j],a[i]]; } return a; }
+function setStatus(msg){ const el = $('#status'); if(el) el.textContent = msg; }
+function musicLoad(){
+  music.list = MUSIC.shuffle === false ? (MUSIC.tracks||[]).slice() : shuffleArr(MUSIC.tracks||[]);
+  music.idx = 0; music.local = false;
+  const first = music.list[0];
+  $('#musicCredit').innerHTML = first && first.credit ? `Musik: <a href="${esc(first.creditUrl||'#')}" target="_blank" rel="noreferrer">${esc(first.credit)}</a>` : '';
+}
+function musicPlayCurrent(){
+  const t = music.list[music.idx];
+  if(!t){ setStatus('Keine Musik konfiguriert (siehe music.js).'); return; }
+  const a = music.audio;
+  a.src = t.url;
+  a.volume = Math.min(1, Math.max(0, t.volume ?? (music.local ? MUSIC.localVolume : MUSIC.defaultVolume) ?? .05));
+  a.playbackRate = t.playbackRate || 1;
+  a.loop = music.list.length === 1 && MUSIC.loopPlaylist !== false;
+  a.play().then(()=>{ music.playing = true; musicBtn(); setStatus('Musik: ' + (t.title||'')); })
+          .catch(err=>{ music.playing = false; musicBtn(); setStatus('Musik konnte nicht gestartet werden: ' + (err.message||err)); });
+}
+function musicBtn(){ const b = $('#btnMusic'); b.textContent = music.playing ? 'Musik aus' : 'Musik an'; b.classList.toggle('on', music.playing); b.setAttribute('aria-pressed', music.playing); }
+music.audio.addEventListener('ended', ()=>{
+  if(music.list.length < 2){ return; }
+  music.idx++;
+  if(music.idx >= music.list.length){ if(MUSIC.loopPlaylist === false){ music.playing = false; musicBtn(); return; } music.idx = 0; }
+  musicPlayCurrent();
+});
+music.audio.addEventListener('error', ()=>{ music.playing = false; musicBtn(); setStatus('Musikdatei konnte nicht geladen werden (offline?).'); });
+$('#btnMusic').onclick = ()=>{
+  if(music.playing){ music.audio.pause(); music.playing = false; musicBtn(); return; }
+  if(music.audio.src && music.audio.paused && music.audio.currentTime > 0){ music.audio.play().then(()=>{ music.playing = true; musicBtn(); }); return; }
+  musicPlayCurrent();
+};
+$('#btnFiles').onclick = ()=> $('#fileInput').click();
+$('#fileInput').onchange = e=>{
+  const files = [...e.target.files].filter(f=>f.type.startsWith('audio/')).slice(0, MUSIC.maxLocalFiles || 3);
+  if(!files.length) return;
+  music.list = shuffleArr(files.map(f=>({title:f.name, url:URL.createObjectURL(f), volume:MUSIC.localVolume ?? .1, playbackRate:MUSIC.localPlaybackRate ?? .85})));
+  music.idx = 0; music.local = true;
+  musicPlayCurrent();
+};
+if(MUSIC.allowLocalFiles === false) $('#btnFiles').hidden = true;
+
+/* =====================================================================
+   12. SETUP & EVENTS
+   ===================================================================== */
+function applyTheme(name){
+  const th = DESIGN.themes[name] || Object.values(DESIGN.themes)[0];
+  const root = document.documentElement;
+  for(const [k,v] of Object.entries(th.vars || {})) root.style.setProperty(k, v);
+}
+function fillSetup(){
+  const g = R.game;
+  const opt = (arr, def, f=x=>x) => arr.map(x=>`<option value="${x}" ${x==def?'selected':''}>${f(x)}</option>`).join('');
+  $('#sPlayers').innerHTML = opt(g.playerOptions, g.defaultPlayers, x=>x+(x===4?' (2 gegen 2)':''));
+  $('#sHand').innerHTML = opt(g.handSizeOptions, g.defaultHandSize);
+  $('#sTarget').innerHTML = opt(g.targetOptions, g.defaultTarget, fmt);
+  const dk = Object.keys(AI.difficulties);
+  $('#sDiff').innerHTML = dk.map(k=>`<option value="${k}" ${k===AI.defaultDifficulty?'selected':''}>${esc(AI.difficulties[k].label||k)}</option>`).join('');
+  $('#sTheme').innerHTML = Object.entries(DESIGN.themes).map(([k,t])=>`<option value="${k}" ${k===DESIGN.activeTheme?'selected':''}>${esc(t.label||k)}</option>`).join('');
+  $('#personaList').innerHTML = '<b>Deine Gegner:</b><br>' + AI.personas.slice(0,3).map(p=>`${esc(p.name)} – <i>${esc(p.style||'')}</i>: ${esc(p.about||'')}`).join('<br>');
+  updateDealHint();
+}
+function updateDealHint(){
+  const n = +$('#sPlayers').value, h = +$('#sHand').value, d = R.game.drawFromStock[n] || 1;
+  $('#dealHint').textContent = `Jeder erhält ${h} Karten, wer beginnt ${h+1}. Pro Zug ziehst du ${d} Karte${d>1?'n':''} (Hand vor dem Abwurf ${h+d}, danach ${h+d-1}). Regeln & Punkte stehen in rules.js.`;
+}
+$('#sPlayers').onchange = $('#sHand').onchange = updateDealHint;
+$('#sTheme').onchange = ()=>applyTheme($('#sTheme').value);
+$('#btnStart').onclick = ()=>{
+  const cfg = {
+    name: ($('#sName').value.trim() || 'Du').slice(0,18), players:+$('#sPlayers').value, handSize:+$('#sHand').value,
+    target:+$('#sTarget').value, difficulty:$('#sDiff').value, theme:$('#sTheme').value,
+    tricks:$('#sTricks').checked, spectate:$('#sSpectate').checked
+  };
+  applyTheme(cfg.theme);
+  $('#mSetup').classList.remove('show');
+  newGame(cfg);
+};
+$('#btnNew').onclick = ()=>{ if(S) S.timers.forEach(clearTimeout); S = null; $('#mRound').classList.remove('show'); fillSetup(); $('#mSetup').classList.add('show'); };
+$('#btnRules').onclick = ()=>{
+  if(!S){ S = {n:+$('#sPlayers').value, cfg:{target:+$('#sTarget').value}, players:[{name:'Du'},{name:'Mara'},{name:'Lina'},{name:'Jonas'}], timers:[], id:-1, phase:'setup'}; $('#rulesBody').innerHTML = rulesHTML(); S = null; }
+  else $('#rulesBody').innerHTML = rulesHTML();
+  $('#mRules').classList.add('show');
+};
+$('#btnRulesClose').onclick = ()=> $('#mRules').classList.remove('show');
+$('#btnNext').onclick = ()=> nextRound();
+$('#aDraw').onclick = onDraw;
+$('#aPickup').onclick = onPickup;
+$('#aLay').onclick = onLay;
+$('#aDiscard').onclick = ()=>onDiscard();
+let lastCardClick = {id:null, t:0};
+$('#wildTarget').onchange = e=>{ S.target = e.target.value || null; };
+$('#table').addEventListener('click', e=>{
+  const card = e.target.closest('#hand .card');
+  if(card){
+    // Doppelklick selbst erkennen: der erste Klick baut die Hand neu auf, daher feuert das dblclick-Event nicht zuverlässig
+    const id = +card.dataset.id, now = Date.now();
+    if(lastCardClick.id === id && now - lastCardClick.t < 400){
+      lastCardClick = {id:null, t:0};
+      if(S.phase === 'play') return onDiscard(id);
+    }
+    lastCardClick = {id, t:now};
+    return toggleSelect(id);
+  }
+  const meld = e.target.closest('.meld.own');
+  if(meld && humanTurn()){ const r = meld.dataset.rank; S.target = S.target === r ? null : r; render(); }
+});
+$('#table').addEventListener('keydown', e=>{
+  const card = e.target.closest('#hand .card');
+  if(card && (e.key === 'Enter' || e.key === ' ')){ e.preventDefault(); toggleSelect(+card.dataset.id); }
+});
+window.addEventListener('resize', fitHand);
+
+applyTheme(DESIGN.activeTheme);
+musicLoad();
+fillSetup();
+$('#mSetup').classList.add('show');
+</script>
+<script>
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(console.warn));
+}
+</script>
+</body>
+</html>
