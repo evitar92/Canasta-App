@@ -11,9 +11,6 @@
   <title>Am grünen Tisch – Canasta</title>
   <link rel="manifest" href="./manifest.webmanifest">
   <link rel="apple-touch-icon" href="./icon-180.png">
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Playfair+Display:wght@500;600;700&display=swap" rel="stylesheet">
@@ -122,6 +119,7 @@ window.CANASTA_RULES = {
   goOut: {
     bonus: 100,
     concealedBonus: 200,        // "verdeckt": Team hatte vorher noch nichts ausgelegt
+    bonusWhenStockEmpty: 0,     // Bonus fürs Ausmachen, wenn der Nachziehstapel schon leer war ("unehrliches" Ausmachen)
     canastasRequired: { "2": 2, "3": 1, "4": 1 },   // Anzahl Canastas je nach Spielerzahl
     minHandAfterMeld: 2,        // Nach dem Auslegen müssen so viele Karten bleiben (außer Canasta-Pflicht ist erfüllt)
     deadHandEnabled: true,      // "Tot gespielt": zu wenig Karten und keine Canasta -> nur ziehen & abwerfen
@@ -157,6 +155,7 @@ window.CANASTA_RULES = {
     freezeOnStartCard: true,                       // Wild Card / rote 3 als Startkarte friert den Stapel ein
     nextRoundSeconds: 30,
     allowWildDiscard: true,                        // Wild Cards (2, Joker) dürfen abgeworfen werden
+    playOnWhenStockEmpty: true,                    // Nachziehstapel leer: es wird ohne Ziehen weitergespielt (Auslegen/Abwerfen), bis jemand ausmacht
     wildDiscardFreezes: true                       // …und sperren dann den Ablagestapel (Aufnahme nur mit Paar aus der Hand)
   },
 
@@ -435,6 +434,7 @@ window.CANASTA_MUSIC = {
     .opprow .opp{flex:1}
     .oppgroup .zone{flex:1}
     .tracker{display:flex;align-items:center;gap:5px}
+    .stockslot{cursor:pointer;-webkit-user-select:none;user-select:none}
     .tracker .card{--cw:42px}
     @media(min-width:921px){
       .oppgroup .zone,.table>.zone{padding:5px 8px}
@@ -527,6 +527,7 @@ window.CANASTA_MUSIC = {
       <div class="field"><label for="sDiff">Stärke der Computergegner</label><select id="sDiff"></select></div>
       <div class="field"><label for="sTheme">Kartendesign</label><select id="sTheme"></select></div>
       <div class="field check"><input type="checkbox" id="sTricks" checked><label for="sTricks">Fallen &amp; Täuschungen der Gegner</label></div>
+      <div class="field check" id="fTeams"><input type="checkbox" id="sTeams" checked><label for="sTeams">In Teams spielen (2 gegen 2)</label></div>
     </div>
     <div class="field check"><input type="checkbox" id="sSpectate"><label for="sSpectate">Zuschauermodus (alle Plätze spielt der Computer)</label></div>
     <p class="note" id="dealHint"></p>
@@ -570,12 +571,12 @@ const DEFAULT_RULES = {
   cardValues:{JOKER:50,'2':20,A:20,K:10,Q:10,J:10,'10':10,'9':10,'8':10,'7':5,'6':5,'5':5,'4':5,blackThree:5,redThree:100},
   redThrees:{bonusAllFour:400,negativeIfNoMeld:true},
   canasta:{size:7,pureBonus:500,mixedBonus:300,wildBonus:1000,wildCanastaAllowed:true,wildCanastaSize:7,noWildsInCanasta:true},
-  goOut:{bonus:100,concealedBonus:200,canastasRequired:{'2':2,'3':1,'4':1},minHandAfterMeld:2,deadHandEnabled:true,deadHandMaxCards:1},
+  goOut:{bonus:100,bonusWhenStockEmpty:0,concealedBonus:200,canastasRequired:{'2':2,'3':1,'4':1},minHandAfterMeld:2,deadHandEnabled:true,deadHandMaxCards:1},
   melds:{minCards:3,minNaturals:2,maxWilds:3},
   opening:[{from:-999999,min:15},{from:0,min:50},{from:1500,min:90},{from:3000,min:120}],
   game:{playerOptions:[2,3,4],defaultPlayers:4,handSizeOptions:[11,12,13,14,15],defaultHandSize:11,
         targetOptions:[3000,4000,5000,6000,7000,8000,9000,10000],defaultTarget:5000,
-        drawFromStock:{'2':2,'3':1,'4':1},openingRound:true,freezeOnStartCard:true,nextRoundSeconds:30,allowWildDiscard:true,wildDiscardFreezes:true},
+        drawFromStock:{'2':2,'3':1,'4':1},openingRound:true,freezeOnStartCard:true,nextRoundSeconds:30,allowWildDiscard:true,playOnWhenStockEmpty:true,wildDiscardFreezes:true},
   ui:{hidePileHistory:true},
   pickup:{needsNaturalTopCard:true,naturalPairFromHandWhenFrozen:2,allowWhenOwnCanastaOfTopRank:false,allowOneNaturalPlusWildWhenOpen:true}
 };
@@ -642,13 +643,13 @@ let gameSeq = 0;
 function persona(i){
   const list = AI.personas; let idx = i;       // i = Gegner-Index 0..n-2
   const n = S.n;
-  if(n === 4){ idx = [0,2,1][i]; }                 // Platz 2 (Partner) = Lina
+  if(n === 4 && S.T === 2){ idx = [0,2,1][i]; }    // Platz 2 (Partner) = Lina
   const p = list[idx % list.length];
   return {...p, name: list.length > idx ? p.name : p.name + (Math.floor(idx/list.length)+1)};
 }
 function newGame(cfg){
   gameSeq++;
-  const n = cfg.players, T = n === 4 ? 2 : n;
+  const n = cfg.players, teamed = n === 4 && cfg.teams !== false, T = teamed ? 2 : n;
   S = {id:gameSeq, cfg, n, T, round:0, lead:-1, scores:Array(T).fill(0), players:[], log:[], timers:[],
        stock:[], discard:[], melds:[], reds:[], frozen:false, phase:'setup', turn:0, selected:new Set(), target:null,
        drawn:[], openingLeft:0, known:{}, bait:null, ended:false, aiStage:0, startNoMeld:false, lastStatus:''};
@@ -658,7 +659,7 @@ function newGame(cfg){
     const spectator = cfg.spectate && i === 0;
     const pr = i === 0 ? (spectator ? persona(0) : null) : persona(i-1);
     S.players.push({id:i, name: i===0 ? cfg.name : pr.name, isHuman: i===0 && !spectator,
-                    persona: pr || null, hand:[], team: n===4 ? i%2 : i, hold:null});
+                    persona: pr || null, hand:[], team: teamed ? i%2 : i, hold:null});
   }
   startRound();
 }
@@ -707,6 +708,7 @@ function startRound(){
   S.stock = makeDeck(); S.discard = []; S.frozen = false; S.ended = false;
   S.melds = Array.from({length:S.T},()=>[]); S.reds = Array.from({length:S.T},()=>[]);
   S.known = {}; S.bait = null; S.selected = new Set(); S.target = null; S.drawn = []; S.drawHist = [];
+  S.stockEmpty = false; S.passes = 0; S.emptyTurns = 0;
   S.players.forEach(p=>{ p.hand = []; p.hold = null; p.owed = 0; S.known[p.id] = []; });
   for(const p of S.players){
     const k = S.cfg.handSize + (p.id === S.lead ? 1 : 0);
@@ -740,9 +742,22 @@ function startTurn(){
   }
   else{
     S.phase = 'draw';
-    if(S.stock.length === 0 && !(!isOpening() && pickupOptions(p).length)){
-      log('Der Nachziehstapel ist leer – die Runde endet.');
-      return finishRound(null);
+    if(S.stock.length === 0){
+      const canTake = !isOpening() && pickupOptions(p).length;
+      if(!R.game.playOnWhenStockEmpty){
+        if(!canTake){ log('Der Nachziehstapel ist leer – die Runde endet.'); return finishRound(null); }
+      }else{
+        S.stockEmpty = true;
+        if(++S.emptyTurns > 400){ log('Keine Fortschritte mehr – die Runde endet.'); return finishRound(null); }
+        if(!canTake){
+          S.phase = 'play'; S.aiStage = 1;
+          if(p.hand.length === 1 && canDiscard(p, p.hand[0])){
+            log(`${p.name} kann nichts mehr tun und setzt aus.`);
+            if(++S.passes >= S.n){ log('Niemand kann mehr abwerfen – die Runde endet.'); return finishRound(null); }
+            return endTurn();
+          }
+        }
+      }
     }
   }
   if(p.isHuman) say(S.phase==='draw' ? (S.firstDraw ? 'Du bist dran: ziehe die Ersatzkarten für deine roten Dreien.' : 'Du bist dran: ziehe Karten oder nimm den Ablagestapel.') : 'Du bist dran: wirf eine Karte ab.', true);
@@ -940,6 +955,7 @@ function finishLay(p){
   render();
 }
 function discardCard(p, c){
+  S.passes = 0;
   p.hand.splice(p.hand.indexOf(c),1);
   S.discard.push(c);
   S.known[p.id] = S.known[p.id].filter(k=>k.id!==c.id);
@@ -963,7 +979,12 @@ function hint(msg, bad=false){ S.hint = msg; S.hintBad = bad; render(); }
 function humanTurn(){ return S && !S.ended && S.phase !== 'between' && cur().isHuman; }
 function onDraw(){
   if(!humanTurn() || S.phase !== 'draw') return;
-  if(S.stock.length === 0) return hint('Der Nachziehstapel ist leer. Nimm den Ablagestapel auf.', true);
+  if(S.stock.length === 0){
+    if(!R.game.playOnWhenStockEmpty) return hint('Der Nachziehstapel ist leer. Nimm den Ablagestapel auf.', true);
+    S.phase = 'play'; S.hint = '';
+    say('Nachziehstapel leer: lege aus oder wirf eine Karte ab.');
+    return render();
+  }
   const p = cur();
   S.drawn = drawCards(p);
   S.drawHist = (S.drawHist||[]).concat(p.hand.filter(c=>S.drawn.includes(c.id))).slice(-3);
@@ -1209,8 +1230,10 @@ function aiStep(){
     const opt = aiDecidePickup(p);
     if(opt){
       doPickup(p, opt.plan, topCard());
+    }else if(S.stock.length === 0){
+      if(!R.game.playOnWhenStockEmpty) return finishRound(null);
+      S.phase = 'play';
     }else{
-      if(S.stock.length === 0) return finishRound(null);
       S.drawn = drawCards(p); S.phase = 'play';
       log(`${p.name} zieht ${S.drawn.length} Karte${S.drawn.length===1?'':'n'}.`);
     }
@@ -1248,7 +1271,7 @@ function teamScore(t, outTeam, concealed){
   const nReds = S.reds[t].length;
   let reds = nReds*R.cardValues.redThree + (nReds === 4 ? R.redThrees.bonusAllFour : 0);
   if(melds.length === 0 && R.redThrees.negativeIfNoMeld) reds = -reds;
-  const out = outTeam === t ? (concealed ? R.goOut.concealedBonus : R.goOut.bonus) : 0;
+  const out = outTeam === t ? (S.stockEmpty ? (R.goOut.bonusWhenStockEmpty ?? 0) : concealed ? R.goOut.concealedBonus : R.goOut.bonus) : 0;
   const hand = teamMembers(t).reduce((s,p)=>s+sumVal(p.hand),0);
   return {meldPts, canasta, reds, out, hand, total: meldPts + canasta + reds + out - hand};
 }
@@ -1260,7 +1283,7 @@ function finishRound(outTeam, concealed=false){
   const hit = S.scores.map((s,i)=>({s,i})).filter(x=>x.s >= S.cfg.target).sort((a,b)=>b.s-a.s);
   S.winner = hit.length ? hit[0].i : null;
   S.lastRows = rows; S.lastOut = outTeam; S.lastConcealed = concealed;
-  log(outTeam == null ? 'Runde beendet (Stapel leer).' : `Runde beendet: ${teamName(outTeam)} macht aus${concealed?' (verdeckt)':''}.`);
+  log(outTeam == null ? 'Runde beendet (Stapel leer).' : `Runde beendet: ${teamName(outTeam)} macht aus${S.stockEmpty?' (Nachziehstapel war leer – kein Ausmach-Bonus)':concealed?' (verdeckt)':''}.`);
   say('Runde beendet.', true);
   render();
   showRoundModal();
@@ -1272,7 +1295,7 @@ function showRoundModal(){
   const sgn = n => (n>0?'+':'') + fmt(n);
   let html = `<table class="res">${head}
     ${line('Auslage', r=>sgn(r.meldPts))}${line('Canasta-Boni', r=>sgn(r.canasta))}${line('Rote Dreien', r=>sgn(r.reds))}
-    ${line(S.lastConcealed?'Ausmachen (verdeckt)':'Ausmachen', r=>sgn(r.out))}${line('Restkarten', r=>sgn(-r.hand))}
+    ${line(S.stockEmpty&&S.lastOut!=null?'Ausmachen (Stapel leer)':S.lastConcealed?'Ausmachen (verdeckt)':'Ausmachen', r=>sgn(r.out))}${line('Restkarten', r=>sgn(-r.hand))}
     <tr class="sum"><td>Runde</td>${rows.map(r=>`<td>${sgn(r.total)}</td>`).join('')}</tr>
     <tr class="sum"><td>Gesamt</td>${S.scores.map(s=>`<td>${fmt(s)}</td>`).join('')}</tr></table>`;
   const over = S.winner != null;
@@ -1330,7 +1353,7 @@ function render(){
   const top = topCard();
   const pileCards = top ? `<div class="stackwrap ${S.discard.length>8?'s3':S.discard.length>3?'s2':'s1'}">${cardHTML(top)}</div>` : '';
   const pileCount = R.ui.hidePileHistory ? '' : ` (${S.discard.length})`;
-  const center = `<div class="pile"><div class="slot">${S.stock.length?backHTML():'<div class="emptyslot"></div>'}</div>Nachziehstapel (${S.stock.length})</div>
+  const center = `<div class="pile"><div class="slot stockslot" data-stock="1" title="Doppelklick = ziehen">${S.stock.length?backHTML():'<div class="emptyslot"></div>'}</div>Nachziehstapel (${S.stock.length})</div>
     <div class="pile"><div class="slot">${pileCards || '<div class="emptyslot"></div>'}</div>Ablage${pileCount} ${S.frozen?'<span class="frozen">❄ gesperrt</span>':(top && !isNat(top)?'<span class="frozen">gesperrt</span>':'')}</div>`;
   const groups = oppTeams.map(t=>{
     const members = S.players.slice(1).filter(q=>q.team===t);
@@ -1367,7 +1390,7 @@ function render(){
     else if(draw && S.firstDraw) h = `Ziehe ${me().owed} Ersatzkarte${me().owed>1?'n':''} für deine roten Dreien, dann wirf eine Karte ab.`;
     else if(S.dead && ht) h = 'Du bist „tot gespielt“ (1 Karte, keine Canasta): nur ziehen und abwerfen.';
     else if(draw) h = isOpening() ? 'Eröffnungsrunde: ziehe 1 Karte (der Ablagestapel ist gesperrt).' : (pickupBlocked() || 'Ziehen – oder markiere passende Karten und nimm den Ablagestapel auf.');
-    else h = isOpening() ? 'Eröffnungsrunde: wirf eine Karte ab.' : 'Markiere Karten zum Auslegen – oder wirf eine ab.';
+    else h = isOpening() ? 'Eröffnungsrunde: wirf eine Karte ab.' : (S.stockEmpty ? 'Nachziehstapel leer: lege aus oder wirf eine Karte ab – Ausmachen bringt jetzt keinen Bonus.' : 'Markiere Karten zum Auslegen – oder wirf eine ab.');
   }
   $('#hint').textContent = h; $('#hint').style.color = S.hintBad ? 'var(--bad)' : '';
   $('#status').textContent = S.log[0] || '';
@@ -1403,7 +1426,7 @@ function rulesHTML(){
   const ds = Object.entries(R.game.drawFromStock).map(([n,k])=>`${n} Spieler: ${k}`).join(', ');
   return `<p class="note">${RULES_LOADED ? 'Diese Werte stammen aus <b>rules.js</b>.' : '⚠ rules.js wurde nicht gefunden – es gelten die Standardwerte.'} Änderungen dort wirken nach dem Neuladen der Seite.</p>
   <h3>Ziel</h3><ul><li>Bilde mit deinem Team Sätze (mind. ${R.melds.minCards} Karten gleichen Rangs, mind. ${R.melds.minNaturals} natürliche, höchstens ${R.melds.maxWilds} Wild Cards) und sammle Canastas (${R.canasta.size}+ Karten).</li>
-  <li>Wer zuerst die Siegpunktzahl (${fmt(S.cfg.target)}) erreicht, gewinnt. Es gibt ${S.n} Spieler${S.n===4?' – Teams: du + '+esc(S.players[2].name)+' gegen '+esc(S.players[1].name)+' + '+esc(S.players[3].name):''}.</li></ul>
+  <li>Wer zuerst die Siegpunktzahl (${fmt(S.cfg.target)}) erreicht, gewinnt. Es gibt ${S.n} Spieler${S.n===4&&S.T!==4?' – Teams: du + '+esc(S.players[2].name)+' gegen '+esc(S.players[1].name)+' + '+esc(S.players[3].name):''}.</li></ul>
   <h3>Karten</h3><ul><li>Wild Cards: 2 und Joker.${R.game.allowWildDiscard ? ' Wirft jemand eine Wild Card ab' + (R.game.wildDiscardFreezes ? ', ist der Stapel gesperrt (eingefroren): Man braucht dann ein Paar aus der Hand, um ihn samt Wild Card aufzunehmen.' : '.') : ' Wild Cards dürfen nicht abgeworfen werden.'} Rote Dreien werden sofort ausgelegt und ersetzt. Schwarze Dreien sind Stopper (der Stapel kann nicht aufgenommen werden).</li>
   ${R.ui.hidePileHistory ? '<li>Vom Ablagestapel siehst du nur die oberste Karte – den Rest musst du dir merken.</li>' : ''}
   ${R.goOut.deadHandEnabled ? `<li>„Tot gespielt“: Wer nur noch ${R.goOut.deadHandMaxCards} Karte hat und keine nötige Canasta, kann nur noch ziehen und abwerfen – kein Auslegen, kein Aufnehmen, kein Ausmachen.</li>` : ''}
@@ -1415,7 +1438,7 @@ function rulesHTML(){
   <li>Sonst genügt ein passender Satz, ein Paar${R.pickup.allowOneNaturalPlusWildWhenOpen?' oder 1 Karte + 1 Wild Card':''}.</li></ul>
   <h3>Boni</h3><ul><li>Canasta: rein +${fmt(R.canasta.pureBonus)}, gemischt +${fmt(R.canasta.mixedBonus)}${R.canasta.wildCanastaAllowed?`, ${R.canasta.wildCanastaSize} Wild Cards +${fmt(R.canasta.wildBonus)}`:''}.</li>
   <li>Rote Dreien je ${R.cardValues.redThree}, alle vier +${R.redThrees.bonusAllFour}${R.redThrees.negativeIfNoMeld?' (ohne Auslage negativ)':''}.</li>
-  <li>Ausmachen: +${R.goOut.bonus}, verdeckt +${R.goOut.concealedBonus}. Nötige Canastas: ${cs}. Nach dem Auslegen bleiben mind. ${R.goOut.minHandAfterMeld} Karten, solange die Canasta fehlt.</li></ul>
+  <li>Ausmachen: +${R.goOut.bonus}, verdeckt +${R.goOut.concealedBonus}${R.game.playOnWhenStockEmpty?`. Ist der Nachziehstapel leer, wird ohne Ziehen weitergespielt (Auslegen/Abwerfen), bis jemand ausmacht – dann gibt es nur +${R.goOut.bonusWhenStockEmpty ?? 0}`:''}. Nötige Canastas: ${cs}. Nach dem Auslegen bleiben mind. ${R.goOut.minHandAfterMeld} Karten, solange die Canasta fehlt.</li></ul>
   <h3>Die Computergegner</h3><ul><li>Jeder Gegner hat eine eigene Spielweise: Manche nehmen den Haufen sofort, andere warten bewusst, halten Karten zurück oder stellen Fallen (z. B. eine von drei gleichen Karten abwerfen, um dich zum Abwerfen desselben Rangs zu verleiten).</li>
   <li>Sie merken sich, welche Karten Gegner vom Stapel genommen haben, und werfen ungern Ränge ab, die du verwerten kannst.</li></ul>`;
 }
@@ -1488,6 +1511,7 @@ function fillSetup(){
 }
 function updateDealHint(){
   const n = +$('#sPlayers').value, h = +$('#sHand').value, d = R.game.drawFromStock[n] || 1;
+  $('#fTeams').style.display = n === 4 ? '' : 'none';
   $('#dealHint').textContent = `Jeder erhält ${h} Karten, wer beginnt ${h+1}. Pro Zug ziehst du ${d} Karte${d>1?'n':''} (Hand vor dem Abwurf ${h+d}, danach ${h+d-1}). Regeln & Punkte stehen in rules.js.`;
 }
 $('#sPlayers').onchange = $('#sHand').onchange = updateDealHint;
@@ -1496,7 +1520,7 @@ $('#btnStart').onclick = ()=>{
   const cfg = {
     name: ($('#sName').value.trim() || 'Du').slice(0,18), players:+$('#sPlayers').value, handSize:+$('#sHand').value,
     target:+$('#sTarget').value, difficulty:$('#sDiff').value, theme:$('#sTheme').value,
-    tricks:$('#sTricks').checked, spectate:$('#sSpectate').checked
+    tricks:$('#sTricks').checked, spectate:$('#sSpectate').checked, teams:$('#sTeams').checked
   };
   applyTheme(cfg.theme);
   $('#mSetup').classList.remove('show');
@@ -1529,6 +1553,16 @@ $('#table').addEventListener('click', e=>{
     return toggleSelect(id);
   }
   const meld = e.target.closest('.meld.own');
+  const stock = e.target.closest('[data-stock]');
+  if(stock){
+    const now = Date.now();
+    if(lastCardClick.id === 'stock' && now - lastCardClick.t < 400){
+      lastCardClick = {id:null, t:0};
+      return onDraw();
+    }
+    lastCardClick = {id:'stock', t:now};
+    return;
+  }
   if(meld && humanTurn()){ const r = meld.dataset.rank; S.target = S.target === r ? null : r; render(); }
 });
 $('#table').addEventListener('keydown', e=>{
